@@ -171,7 +171,7 @@ struct MusicView: View {
                 Spacer()
                 if let first = searchResults.first {
                     Button {
-                        player.play(first, queue: searchResults, audio: true, expand: false)
+                        player.play(first, queue: searchResults, audio: true, expand: true)
                     } label: {
                         Label("모두 재생", systemImage: "play.fill")
                             .font(.footnote.weight(.semibold))
@@ -255,7 +255,7 @@ struct MusicView: View {
 
     private func songRow(_ song: VideoItem, queue: [VideoItem]) -> some View {
         Button {
-            player.play(song, queue: queue, audio: true, expand: false)
+            player.play(song, queue: queue, audio: true, expand: true)
         } label: {
             HStack(spacing: 12) {
                 artwork(song, size: 52, radius: 6)
@@ -295,7 +295,7 @@ struct MusicView: View {
                     LazyHStack(alignment: .top, spacing: 14) {
                         ForEach(section.items) { song in
                             Button {
-                                player.play(song, queue: section.items, audio: true, expand: false)
+                                player.play(song, queue: section.items, audio: true, expand: true)
                             } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     artwork(song, size: 150, radius: 10)
@@ -325,7 +325,7 @@ struct MusicView: View {
             Spacer()
             if let first = section.items.first {
                 Button {
-                    player.play(first, queue: section.items, audio: true, expand: false)
+                    player.play(first, queue: section.items, audio: true, expand: true)
                 } label: {
                     Label("모두 재생", systemImage: "play.fill")
                         .font(.footnote.weight(.semibold))

@@ -1,23 +1,28 @@
 import AVFoundation
 import Foundation
+#if canImport(YouTubeKit)
 import YouTubeKit
+#endif
 
 /// 재생할 소스
 enum PlaybackSource: Sendable {
-    /// HLS(.m3u8) 또는 영상+소리가 합쳐진 단일 파일
+    /// YouTube가 준 HLS(.m3u8) 또는 단일 파일
     case single(URL)
-    /// 영상 트랙과 오디오 트랙이 분리된 경우 (AVMutableComposition으로 합쳐서 재생)
+    /// 앱이 직접 만든 HLS 재생목록 (ktube:// — HLSPlaylistLoader가 제공)
+    case local(URL)
+    /// 영상/오디오 분리 파일을 AVMutableComposition으로 합쳐 재생 (최후 수단)
     case split(video: URL, audio: URL)
 }
 
 /// 영상 ID → 재생 소스 변환기.
 ///
-/// 빠른 경로: InnerTube `player` API를 iOS 앱 클라이언트로 한 번 호출 (≈0.3~0.5초)
-///   1) hlsManifestUrl 이 있으면 HLS (화질 자동 조절, 최대 1080p+)
-///   2) 없으면 H.264 mp4 영상(≤1080p) + m4a 오디오를 합쳐서 재생
-/// 느린 경로(대체): YouTubeKit 로컬 추출
+/// 1) InnerTube `player` API를 iOS 앱 클라이언트로 한 번 호출 (≈0.3~0.5초)
+/// 2) hlsManifestUrl이 있으면 그대로 HLS 재생
+/// 3) 없으면(뮤직비디오 등) DASH 영상/오디오의 sidx(조각 위치표, 수백 바이트)만 받아
+///    HLS 재생목록을 앱에서 직접 만들어 재생 → 파일 전체를 훑지 않아 즉시 시작
+/// 4) 모두 실패하면 YouTubeKit(느림)
 ///
-/// 결과는 3시간 캐시, 같은 영상 동시 요청은 한 번만 수행, 다음 곡 미리 추출.
+/// 결과는 3시간 캐시하고, 화면에 보이는 영상/다음 곡은 미리 준비(prefetch)한다.
 actor StreamResolver {
     static let shared = StreamResolver()
 
@@ -25,39 +30,48 @@ actor StreamResolver {
 
     private struct Entry: Sendable {
         let video: PlaybackSource?
-        let audio: URL?
+        let audio: PlaybackSource?
         let date: Date
     }
 
     private var cache: [String: Entry] = [:]
     private var inflight: [String: Task<Entry, Error>] = [:]
+    private var prefetching = 0
     private let ttl: TimeInterval = 3 * 3600
 
     func resolve(id: String, audioOnly: Bool) async throws -> PlaybackSource {
         let entry = try await entry(for: id)
-        if audioOnly, let audio = entry.audio { return .single(audio) }
+        if audioOnly, let audio = entry.audio { return audio }
         if let video = entry.video { return video }
-        if let audio = entry.audio { return .single(audio) }
+        if let audio = entry.audio { return audio }
         throw AppError.noPlayableStream
     }
 
+    /// 백그라운드로 미리 준비. 동시에 너무 많이 요청하지 않도록 4개로 제한.
     func prefetch(_ ids: [String]) {
-        for id in ids where cache[id] == nil && inflight[id] == nil {
-            Task { _ = try? await self.entry(for: id) }
+        for id in ids {
+            if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
+            guard inflight[id] == nil, prefetching < 4 else { continue }
+            prefetching += 1
+            Task {
+                _ = try? await self.entry(for: id)
+                self.prefetchDone()
+            }
         }
     }
+
+    private func prefetchDone() { prefetching -= 1 }
 
     func invalidate(_ id: String) {
         cache[id] = nil
     }
 
-    /// 빠른 경로의 소스가 재생되지 않을 때 YouTubeKit으로 다시 추출
     func resolveSlow(id: String, audioOnly: Bool) async throws -> PlaybackSource {
         let entry = try await Self.fetchWithYouTubeKit(id: id)
         cache[id] = entry
-        if audioOnly, let audio = entry.audio { return .single(audio) }
+        if audioOnly, let audio = entry.audio { return audio }
         if let video = entry.video { return video }
-        if let audio = entry.audio { return .single(audio) }
+        if let audio = entry.audio { return audio }
         throw AppError.noPlayableStream
     }
 
@@ -79,7 +93,7 @@ actor StreamResolver {
         return entry
     }
 
-    // MARK: - 빠른 경로: InnerTube player (iOS 클라이언트)
+    // MARK: - InnerTube player (iOS 클라이언트)
 
     private static func fetchFromInnerTube(id: String) async throws -> Entry {
         var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
@@ -114,25 +128,37 @@ actor StreamResolver {
               let streaming = json["streamingData"] as? [String: Any]
         else { throw AppError.noPlayableStream }
 
-        let adaptive = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).filter { $0["url"] is String }
-        func url(_ f: [String: Any]?) -> URL? { (f?["url"] as? String).flatMap(URL.init(string:)) }
-        func mime(_ f: [String: Any]) -> String { f["mimeType"] as? String ?? "" }
+        let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
+        let audioFormat = formats.first { $0.itag == 140 }
+            ?? formats.filter { $0.isAudio }.max { $0.bitrate < $1.bitrate }
 
-        let audioFormat = adaptive.first { $0["itag"] as? Int == 140 }
-            ?? adaptive.filter { mime($0).hasPrefix("audio/mp4") }
-                .max { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) }
-        let audio = url(audioFormat)
+        // 화질 후보: 720p 먼저(빠른 시작), 그다음 1080p / 480p 로 자동 전환
+        let videoFormats: [DashFormat] = [720, 1080, 480].compactMap { height in
+            formats.first { $0.isVideo && $0.codecs.hasPrefix("avc1") && $0.height == height }
+        }
+
+        // 오디오: 자체 HLS(즉시 시작) → 실패 시 원본 파일
+        var audio: PlaybackSource?
+        if let audioFormat {
+            if let local = try? await HLSPlaylistLoader.shared.buildAudio(id: id, audio: audioFormat) {
+                audio = .local(local)
+            } else {
+                audio = .single(audioFormat.url)
+            }
+        }
 
         var video: PlaybackSource?
         if let hls = (streaming["hlsManifestUrl"] as? String).flatMap(URL.init(string:)) {
             video = .single(hls)
-        } else if let audio,
-                  let best = adaptive
-                      .filter({ mime($0).hasPrefix("video/mp4") && mime($0).contains("avc1") && ($0["height"] as? Int ?? 0) <= 1080 })
-                      .max(by: { ($0["height"] as? Int ?? 0) < ($1["height"] as? Int ?? 0) }),
-                  let videoURL = url(best) {
-            video = .split(video: videoURL, audio: audio)
-        } else if let muxed = url((streaming["formats"] as? [[String: Any]])?.first(where: { $0["url"] is String })) {
+        } else if let audioFormat, !videoFormats.isEmpty {
+            if let local = try? await HLSPlaylistLoader.shared.buildVideo(id: id, videos: videoFormats, audio: audioFormat) {
+                video = .local(local)
+            } else {
+                video = .split(video: videoFormats[0].url, audio: audioFormat.url)
+            }
+        } else if let muxed = (streaming["formats"] as? [[String: Any]])?
+                    .first(where: { $0["url"] is String })
+                    .flatMap({ ($0["url"] as? String).flatMap(URL.init(string:)) }) {
             video = .single(muxed)
         }
 
@@ -140,9 +166,10 @@ actor StreamResolver {
         return Entry(video: video, audio: audio, date: Date())
     }
 
-    // MARK: - 느린 경로: YouTubeKit
+    // MARK: - YouTubeKit (느린 대체 경로)
 
     private static func fetchWithYouTubeKit(id: String) async throws -> Entry {
+        #if canImport(YouTubeKit)
         let streams = try await YouTube(videoID: id, methods: [.local, .remote]).streams
 
         let audio = streams
@@ -156,7 +183,10 @@ actor StreamResolver {
             .highestResolutionStream()
 
         guard muxed != nil || audio != nil else { throw AppError.noPlayableStream }
-        return Entry(video: muxed.map { .single($0.url) }, audio: audio?.url, date: Date())
+        return Entry(video: muxed.map { .single($0.url) }, audio: audio.map { .single($0.url) }, date: Date())
+        #else
+        throw AppError.noPlayableStream
+        #endif
     }
 
     // MARK: - AVPlayerItem 만들기
@@ -166,6 +196,13 @@ actor StreamResolver {
         switch source {
         case .single(let url):
             return AVPlayerItem(asset: AVURLAsset(url: url, options: options))
+
+        case .local(let url):
+            let asset = AVURLAsset(url: url, options: options)
+            asset.resourceLoader.setDelegate(HLSPlaylistLoader.shared, queue: HLSPlaylistLoader.shared.queue)
+            let item = AVPlayerItem(asset: asset)
+            item.preferredForwardBufferDuration = 0
+            return item
 
         case .split(let videoURL, let audioURL):
             let videoAsset = AVURLAsset(url: videoURL, options: options)
@@ -188,5 +225,198 @@ actor StreamResolver {
                 .insertTimeRange(range, of: audioTrack, at: .zero)
             return AVPlayerItem(asset: composition)
         }
+    }
+}
+
+// MARK: - DASH 포맷 정보
+
+struct DashFormat: Sendable {
+    let itag: Int
+    let url: URL
+    let mime: String
+    let codecs: String
+    let bitrate: Int
+    let width: Int
+    let height: Int
+    let initRange: ClosedRange<Int>
+    let indexRange: ClosedRange<Int>
+
+    var isAudio: Bool { mime.hasPrefix("audio/mp4") }
+    var isVideo: Bool { mime.hasPrefix("video/mp4") }
+
+    init?(_ d: [String: Any]) {
+        guard let itag = d["itag"] as? Int,
+              let urlString = d["url"] as? String, let url = URL(string: urlString),
+              let mimeType = d["mimeType"] as? String,
+              let initRange = Self.range(d["initRange"]),
+              let indexRange = Self.range(d["indexRange"])
+        else { return nil }
+        self.itag = itag
+        self.url = url
+        self.mime = mimeType.components(separatedBy: ";").first ?? mimeType
+        if let start = mimeType.range(of: "codecs=\"") {
+            let rest = mimeType[start.upperBound...]
+            self.codecs = String(rest.prefix { $0 != "\"" })
+        } else {
+            self.codecs = ""
+        }
+        self.bitrate = d["bitrate"] as? Int ?? 0
+        self.width = d["width"] as? Int ?? 0
+        self.height = d["height"] as? Int ?? 0
+        self.initRange = initRange
+        self.indexRange = indexRange
+    }
+
+    private static func range(_ any: Any?) -> ClosedRange<Int>? {
+        guard let d = any as? [String: Any],
+              let start = Int("\(d["start"] ?? "")"), let end = Int("\(d["end"] ?? "")"), end >= start
+        else { return nil }
+        return start...end
+    }
+}
+
+// MARK: - 앱이 만든 HLS 재생목록 제공 (AVAssetResourceLoader, ktube:// 스킴)
+
+final class HLSPlaylistLoader: NSObject, AVAssetResourceLoaderDelegate, @unchecked Sendable {
+    static let shared = HLSPlaylistLoader()
+    let queue = DispatchQueue(label: "ktube.hls.loader")
+
+    private let lock = NSLock()
+    private var files: [String: String] = [:]
+
+    private func store(_ key: String, _ text: String) {
+        lock.lock(); files[key] = text; lock.unlock()
+    }
+
+    private func lookup(_ key: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return files[key]
+    }
+
+    /// 영상(여러 화질) + 오디오 그룹으로 된 마스터 재생목록
+    func buildVideo(id: String, videos: [DashFormat], audio: DashFormat) async throws -> URL {
+        async let audioPlaylist = Self.mediaPlaylist(audio)
+        var variants: [(DashFormat, String)] = []
+        try await withThrowingTaskGroup(of: (Int, String)?.self) { group in
+            for (index, format) in videos.enumerated() {
+                group.addTask { (try? await Self.mediaPlaylist(format)).map { (index, $0) } }
+            }
+            var built: [(Int, String)] = []
+            for try await result in group { if let result { built.append(result) } }
+            variants = built.sorted { $0.0 < $1.0 }.map { (videos[$0.0], $0.1) }
+        }
+        guard !variants.isEmpty else { throw AppError.noPlayableStream }
+        store("/\(id)/a.m3u8", try await audioPlaylist)
+
+        var master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n"
+        master += "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"ktube://p/\(id)/a.m3u8\"\n"
+        for (format, playlist) in variants {
+            store("/\(id)/v\(format.itag).m3u8", playlist)
+            master += "#EXT-X-STREAM-INF:BANDWIDTH=\(format.bitrate + audio.bitrate),CODECS=\"\(format.codecs),\(audio.codecs)\",RESOLUTION=\(format.width)x\(format.height),AUDIO=\"aud\"\n"
+            master += "ktube://p/\(id)/v\(format.itag).m3u8\n"
+        }
+        store("/\(id)/master.m3u8", master)
+        return URL(string: "ktube://p/\(id)/master.m3u8")!
+    }
+
+    /// 오디오만 있는 재생목록 (음악 모드)
+    func buildAudio(id: String, audio: DashFormat) async throws -> URL {
+        let playlist = try await Self.mediaPlaylist(audio)
+        store("/\(id)/a.m3u8", playlist)
+        let master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n"
+            + "#EXT-X-STREAM-INF:BANDWIDTH=\(max(audio.bitrate, 64000)),CODECS=\"\(audio.codecs)\"\n"
+            + "ktube://p/\(id)/a.m3u8\n"
+        store("/\(id)/audio.m3u8", master)
+        return URL(string: "ktube://p/\(id)/audio.m3u8")!
+    }
+
+    /// sidx를 읽어서 바이트 범위 기반 fMP4 미디어 재생목록 생성
+    private static func mediaPlaylist(_ format: DashFormat) async throws -> String {
+        var request = URLRequest(url: format.url)
+        request.timeoutInterval = 8
+        request.setValue("bytes=\(format.indexRange.lowerBound)-\(format.indexRange.upperBound)", forHTTPHeaderField: "Range")
+        request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let segments = try parseSidx([UInt8](data), anchor: format.indexRange.upperBound + 1)
+        guard !segments.isEmpty else { throw AppError.noPlayableStream }
+
+        let target = Int((segments.map(\.duration).max() ?? 10).rounded(.up))
+        let url = format.url.absoluteString
+        let initLength = format.initRange.upperBound - format.initRange.lowerBound + 1
+        var lines = [
+            "#EXTM3U",
+            "#EXT-X-VERSION:7",
+            "#EXT-X-TARGETDURATION:\(target)",
+            "#EXT-X-MEDIA-SEQUENCE:0",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
+            "#EXT-X-INDEPENDENT-SEGMENTS",
+            "#EXT-X-MAP:URI=\"\(url)\",BYTERANGE=\"\(initLength)@\(format.initRange.lowerBound)\"",
+        ]
+        lines.reserveCapacity(segments.count * 3 + 10)
+        for segment in segments {
+            lines.append(String(format: "#EXTINF:%.5f,", segment.duration))
+            lines.append("#EXT-X-BYTERANGE:\(segment.size)@\(segment.offset)")
+            lines.append(url)
+        }
+        lines.append("#EXT-X-ENDLIST")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private struct Segment {
+        let offset: Int
+        let size: Int
+        let duration: Double
+    }
+
+    private static func parseSidx(_ b: [UInt8], anchor: Int) throws -> [Segment] {
+        func u32(_ i: Int) -> Int { Int(b[i]) << 24 | Int(b[i + 1]) << 16 | Int(b[i + 2]) << 8 | Int(b[i + 3]) }
+        func u16(_ i: Int) -> Int { Int(b[i]) << 8 | Int(b[i + 1]) }
+        func u64(_ i: Int) -> Int { u32(i) << 32 | u32(i + 4) }
+
+        guard b.count >= 32, b[4] == 0x73, b[5] == 0x69, b[6] == 0x64, b[7] == 0x78 else {
+            throw AppError.noPlayableStream // "sidx" 아님
+        }
+        let version = b[8]
+        var p = 12 + 4 // reference_ID 건너뜀
+        let timescale = u32(p); p += 4
+        let firstOffset: Int
+        if version == 0 {
+            firstOffset = u32(p + 4); p += 8
+        } else {
+            firstOffset = u64(p + 8); p += 16
+        }
+        p += 2 // reserved
+        let count = u16(p); p += 2
+        guard timescale > 0, b.count >= p + count * 12 else { throw AppError.noPlayableStream }
+
+        var segments: [Segment] = []
+        var offset = anchor + firstOffset
+        for _ in 0..<count {
+            let size = u32(p) & 0x7fff_ffff
+            let duration = Double(u32(p + 4)) / Double(timescale)
+            segments.append(Segment(offset: offset, size: size, duration: duration))
+            offset += size
+            p += 12
+        }
+        return segments
+    }
+
+    // MARK: AVAssetResourceLoaderDelegate
+
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
+                        shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
+        // 영상 ID는 대소문자를 구분하므로 호스트가 아닌 경로에 담는다: ktube://p/<id>/master.m3u8
+        guard let url = loadingRequest.request.url, url.scheme == "ktube",
+              let text = lookup(url.path)
+        else { return false }
+        let data = Data(text.utf8)
+        if let info = loadingRequest.contentInformationRequest {
+            info.contentType = "public.m3u-playlist"
+            info.contentLength = Int64(data.count)
+            info.isByteRangeAccessSupported = false
+        }
+        loadingRequest.dataRequest?.respond(with: data)
+        loadingRequest.finishLoading()
+        return true
     }
 }

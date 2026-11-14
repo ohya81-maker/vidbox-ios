@@ -15,6 +15,8 @@ struct PlayerView: View {
                     .ignoresSafeArea()
                     .statusBarHidden()
                     .persistentSystemOverlays(.hidden)
+            } else if player.isQueueMode && player.audioOnly {
+                MusicPlayerView()
             } else {
                 portrait
             }
@@ -325,6 +327,7 @@ struct PlayerStage: View {
             }
         }
         .foregroundStyle(.white)
+        .buttonStyle(.plain) // iOS 26 기본 버튼 모양(원형 배경) 없이 아이콘만
     }
 
     private func audioArtwork(_ item: VideoItem) -> some View {
@@ -384,6 +387,7 @@ private extension View {
 struct Scrubber: View {
     let current: Double
     let duration: Double
+    var tint: Color = .white
     var onScrub: (Double?) -> Void
     var onCommit: (Double) -> Void
     @State private var dragTime: Double?
@@ -395,11 +399,11 @@ struct Scrubber: View {
             let progress = duration > 0 ? min(max(shown / duration, 0), 1) : 0
             let active = dragTime != nil
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.3))
+                Capsule().fill(tint.opacity(0.3))
                     .frame(height: active ? 6 : 3)
-                Capsule().fill(.white)
+                Capsule().fill(tint)
                     .frame(width: width * progress, height: active ? 6 : 3)
-                Circle().fill(.white)
+                Circle().fill(tint)
                     .frame(width: active ? 18 : 12, height: active ? 18 : 12)
                     .offset(x: width * progress - (active ? 9 : 6))
             }
@@ -471,6 +475,7 @@ struct MiniPlayerView: View {
                 }
             }
             .foregroundStyle(.primary)
+            .buttonStyle(.plain)
             .padding(.leading, 6)
             .padding(.trailing, 8)
             .padding(.vertical, 6)

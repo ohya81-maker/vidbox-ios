@@ -46,15 +46,50 @@ final class PlayerManager: ObservableObject {
     private let layers = NSHashTable<AVPlayerLayer>.weakObjects()
     private var slowRetriedID: String?
 
-    /// 재생목록이 있으면 그 다음 곡들, 없으면 추천 영상
+    enum RepeatMode { case off, all, one }
+
+    /// 음악 재생 도구
+    @Published private(set) var shuffle = false
+    @Published var repeatMode: RepeatMode = .off
+    /// 실제 재생 순서 (무작위가 켜지면 섞인 순서)
+    @Published private(set) var playOrder: [VideoItem] = []
+
+    /// 재생목록이 있으면 그 다음 곡들(전체 반복이면 처음으로 이어짐), 없으면 추천 영상
     var upNext: [VideoItem] {
-        if let current, let index = queue.firstIndex(where: { $0.id == current.id }) {
-            return Array(queue.dropFirst(index + 1))
+        if let current, let index = playOrder.firstIndex(where: { $0.id == current.id }) {
+            var next = Array(playOrder.dropFirst(index + 1))
+            if repeatMode == .all { next += playOrder.prefix(index) }
+            return next
         }
         return related
     }
 
     var isQueueMode: Bool { !queue.isEmpty }
+
+    func toggleShuffle() {
+        shuffle.toggle()
+        rebuildOrder()
+        prefetchNext()
+    }
+
+    func cycleRepeat() {
+        switch repeatMode {
+        case .off: repeatMode = .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
+    }
+
+    private func rebuildOrder() {
+        guard !queue.isEmpty else { playOrder = []; return }
+        if shuffle {
+            var rest = queue.filter { $0.id != current?.id }.shuffled()
+            if let current, queue.contains(where: { $0.id == current.id }) { rest.insert(current, at: 0) }
+            playOrder = rest
+        } else {
+            playOrder = queue
+        }
+    }
 
     private init() {
         // 버퍼를 오래 기다리지 않고 바로 재생 시작
@@ -82,6 +117,7 @@ final class PlayerManager: ObservableObject {
 
         loadTask?.cancel()
         current = item
+        if newQueue != nil || !continuingQueue { rebuildOrder() }
         isLoading = true
         errorMessage = nil
         related = []
@@ -163,11 +199,17 @@ final class PlayerManager: ObservableObject {
 
     func playPrevious() {
         if currentTime > 5 { seek(to: 0); return }
-        guard let current, let index = queue.firstIndex(where: { $0.id == current.id }), index > 0 else {
+        guard let current, let index = playOrder.firstIndex(where: { $0.id == current.id }) else {
             seek(to: 0)
             return
         }
-        play(queue[index - 1], expand: false)
+        if index > 0 {
+            play(playOrder[index - 1], expand: false)
+        } else if repeatMode == .all, let last = playOrder.last {
+            play(last, expand: false)
+        } else {
+            seek(to: 0)
+        }
     }
 
     func stop() {
@@ -177,6 +219,7 @@ final class PlayerManager: ObservableObject {
         current = nil
         related = []
         queue = []
+        playOrder = []
         isExpanded = false
         errorMessage = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -305,6 +348,11 @@ final class PlayerManager: ObservableObject {
     }
 
     private func handleEnded() {
+        if repeatMode == .one {
+            player.seek(to: .zero)
+            player.play()
+            return
+        }
         if (autoplay || isQueueMode), let next = upNext.first {
             play(next, expand: false)
         } else {

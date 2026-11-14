@@ -51,12 +51,12 @@ final class ShortsFeed: ObservableObject {
 
 @MainActor
 final class ShortsPlayer: ObservableObject {
-    let player = AVQueuePlayer()
+    let player = AVPlayer()
     @Published private(set) var isReady = false
     @Published private(set) var isPaused = false
     @Published private(set) var failed = false
     private(set) var currentID: String?
-    private var looper: AVPlayerLooper?
+    private var endObserver: NSObjectProtocol?
     private var task: Task<Void, Never>?
     private var statusObservation: NSKeyValueObservation?
 
@@ -81,15 +81,23 @@ final class ShortsPlayer: ObservableObject {
         failed = false
         task?.cancel()
         player.pause()
-        looper?.disableLooping()
-        looper = nil
-        player.removeAllItems()
+        player.replaceCurrentItem(with: nil)
 
         task = Task { [weak self] in
             do {
-                let template = try await PlayerManager.loadItem(id: item.id, audioOnly: false)
+                let playerItem = try await PlayerManager.loadItem(id: item.id, audioOnly: false)
                 guard !Task.isCancelled, let self, self.currentID == item.id else { return }
-                self.looper = AVPlayerLooper(player: self.player, templateItem: template)
+                // HLS도 반복되도록 끝나면 처음으로 되감기
+                if let old = self.endObserver { NotificationCenter.default.removeObserver(old) }
+                self.endObserver = NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.player.seek(to: .zero)
+                        self?.player.play()
+                    }
+                }
+                self.player.replaceCurrentItem(with: playerItem)
                 PlayerManager.shared.activateAudioSession()
                 self.player.play()
             } catch {

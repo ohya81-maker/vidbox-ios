@@ -21,6 +21,13 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
+      - name: Playback smoke test (AVFoundation on macOS)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          swiftc -O ci/main.swift Vidbox/StreamResolver.swift Vidbox/Models.swift -o playtest
+          ./playtest
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

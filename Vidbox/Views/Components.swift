@@ -118,6 +118,8 @@ struct VideoCard: View {
         }
         .buttonStyle(.plain)
         .padding(.bottom, 18)
+        // 화면에 보이는 영상은 재생 주소를 미리 받아 둬서 누르면 바로 시작
+        .onAppear { Task { await StreamResolver.shared.prefetch([item.id]) } }
     }
 }
 
