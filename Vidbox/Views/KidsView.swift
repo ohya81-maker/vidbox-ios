@@ -98,14 +98,17 @@ struct KidsView: View {
             Menu {
                 Picker("나이", selection: $ageRaw) {
                     ForEach(Age.allCases) { a in
-                        Text("\(a.emoji) \(a.label)").tag(a.rawValue)
+                        Label(a.label, systemImage: a.symbol).tag(a.rawValue)
                     }
                 }
             } label: {
-                Text(age.emoji)
-                    .font(.system(size: 24))
+                // 원형 그라데이션 배경 + 흰 플랫 아이콘
+                Image(systemName: age.symbol)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
-                    .background(Color.yellow.opacity(0.9), in: Circle())
+                    .background(LinearGradient(colors: ageColors(age), startPoint: .topLeading, endPoint: .bottomTrailing),
+                                in: Circle())
             }
         }
         .buttonStyle(.plain)
@@ -203,6 +206,14 @@ struct KidsView: View {
                 }
                 .padding(.horizontal, 16)
             }
+        }
+    }
+
+    private func ageColors(_ a: Age) -> [Color] {
+        switch a {
+        case .preschool: return [Color(red: 1.0, green: 0.55, blue: 0.70), Color(red: 0.93, green: 0.30, blue: 0.52)]
+        case .younger: return [Color(red: 1.0, green: 0.72, blue: 0.30), Color(red: 0.98, green: 0.48, blue: 0.18)]
+        case .tween: return [Color(red: 0.36, green: 0.66, blue: 1.0), Color(red: 0.22, green: 0.42, blue: 0.95)]
         }
     }
 

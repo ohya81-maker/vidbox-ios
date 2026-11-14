@@ -77,11 +77,12 @@ final class InnerTubeClient {
             case .tween: return "초등 고학년 (9~12세)"
             }
         }
-        var emoji: String {
+        /// 나이 선택 아이콘 (플랫한 SF Symbol)
+        var symbol: String {
             switch self {
-            case .preschool: return "🧸"
-            case .younger: return "🎈"
-            case .tween: return "🚀"
+            case .preschool: return "teddybear.fill"
+            case .younger: return "figure.child"
+            case .tween: return "graduationcap.fill"
             }
         }
     }
