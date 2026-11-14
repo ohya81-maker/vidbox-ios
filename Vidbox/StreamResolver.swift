@@ -13,12 +13,15 @@ enum PlaybackSource: Sendable {
     case local(String)
     /// 영상/오디오 분리 파일을 AVMutableComposition으로 합쳐 재생
     case split(video: URL, audio: URL)
+    /// YouTube가 앞부분만 허용하는 영상용 Android 360p 합본 (끝까지 재생 가능)
+    case limited(URL)
 
     var kind: String {
         switch self {
         case .single(let url): return url.absoluteString.contains("m3u8") ? "youtube-hls" : "file"
         case .local: return "local-hls"
         case .split: return "split"
+        case .limited: return "limited-360p"
         }
     }
 }
@@ -173,8 +176,8 @@ actor StreamResolver {
         // 뒤쪽 1KB를 요청해 보고 막혀 있으면, 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
         if let probe = audioFormat ?? videoFormats.first, await isGated(probe),
            let full = try? await fetchAndroidMuxed(id: id) {
-            video.insert(.single(full), at: 0)
-            audio.insert(.single(full), at: 0)
+            video.insert(.limited(full), at: 0)
+            audio.insert(.limited(full), at: 0)
         }
 
         guard !video.isEmpty || !audio.isEmpty else { throw AppError.noPlayableStream }
@@ -260,7 +263,7 @@ actor StreamResolver {
     nonisolated static func makeItem(_ source: PlaybackSource) async throws -> AVPlayerItem {
         let options: [String: Any] = [AVURLAssetHTTPUserAgentKey: iosUserAgent]
         switch source {
-        case .single(let url):
+        case .single(let url), .limited(let url):
             return AVPlayerItem(asset: AVURLAsset(url: url, options: options))
 
         case .local(let path):

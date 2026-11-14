@@ -326,6 +326,14 @@ struct PlayerStage: View {
                 HStack(alignment: .center) {
                     Text("\(formatTime(scrubTime ?? player.currentTime)) / \(formatTime(player.duration))")
                         .font(.caption.monospacedDigit().weight(.medium))
+                    if player.sourceKind == "limited-360p" && !player.audioOnly {
+                        // YouTube가 이 영상의 고화질을 앞부분만 허용 → 끝까지 재생되는 360p로 재생 중
+                        Text("360p · YouTube 제한")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.white.opacity(0.2), in: Capsule())
+                    }
                     Spacer()
                     Button { player.setFullscreen(!fullscreen) } label: {
                         Image(systemName: fullscreen
@@ -454,6 +462,10 @@ private struct ScrubberSlider: UIViewRepresentable {
         slider.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
         slider.addTarget(context.coordinator, action: #selector(Coordinator.ended(_:)),
                          for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        // 막대의 아무 곳이나 탭해도 그 위치로 이동
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
+        tap.cancelsTouchesInView = false
+        slider.addGestureRecognizer(tap)
         return slider
     }
 
@@ -485,14 +497,31 @@ private struct ScrubberSlider: UIViewRepresentable {
 
         @objc func changed(_ slider: UISlider) {
             isTracking = true
+            didDrag = true
             parent.onScrub(Double(slider.value))
         }
+
+        private var didDrag = false
 
         @objc func ended(_ slider: UISlider) {
             guard isTracking else { return }
             isTracking = false
             slider.setNeedsLayout()
-            parent.onCommit(Double(slider.value))
+            // 드래그로 값이 바뀐 경우만 이동 (단순 탭은 tapped에서 처리)
+            if didDrag { parent.onCommit(Double(slider.value)) }
+            didDrag = false
+            parent.onScrub(nil)
+        }
+
+        @objc func tapped(_ gesture: UITapGestureRecognizer) {
+            guard let slider = gesture.view as? UISlider, slider.bounds.width > 0 else { return }
+            let x = gesture.location(in: slider).x
+            let ratio = Float(min(max(x / slider.bounds.width, 0), 1))
+            let value = slider.minimumValue + ratio * (slider.maximumValue - slider.minimumValue)
+            slider.setValue(value, animated: true)
+            isTracking = false
+            didDrag = false
+            parent.onCommit(Double(value))
             parent.onScrub(nil)
         }
     }
