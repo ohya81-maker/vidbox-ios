@@ -243,9 +243,9 @@ struct ShortPage: View {
                 }
                 if shorts.isPaused {
                     Image(systemName: "play.fill")
-                        .font(.system(size: 34))
-                        .foregroundStyle(.white)
-                        .glassCircle(size: 76)
+                        .font(.system(size: 54))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .shadow(color: .black.opacity(0.5), radius: 6)
                         .allowsHitTesting(false)
                 }
             }
@@ -284,6 +284,7 @@ struct ShortPage: View {
                         player.play(item)
                     }
                 }
+                .buttonStyle(.plain)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
@@ -298,11 +299,14 @@ struct ShortPage: View {
 
     private func sideLabel(_ icon: String, label: String) -> some View {
         VStack(spacing: 4) {
+            // 배경 없이 아이콘만 (밝은 화면에서도 보이도록 옅은 그림자)
             Image(systemName: icon)
-                .font(.system(size: 20, weight: .semibold))
-                .glassCircle(size: 46)
-            Text(label).font(.caption2.weight(.medium))
+                .font(.system(size: 28, weight: .semibold))
+                .frame(width: 46, height: 40)
+            Text(label).font(.caption2.weight(.semibold))
         }
         .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+        .contentShape(Rectangle())
     }
 }

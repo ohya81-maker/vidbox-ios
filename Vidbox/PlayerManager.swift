@@ -360,12 +360,12 @@ final class PlayerManager: ObservableObject {
         errorMessage = "재생할 수 없는 영상입니다."
     }
 
-    /// 재생 시작 5초 뒤에도 시간이 흐르지 않으면 다음 후보로 전환
+    /// 재생 시작 9초 뒤에도 시간이 흐르지 않으면 다음 후보로 전환
     private func armWatchdog(item: VideoItem, position: Double, autoPlay: Bool) {
         watchdog?.cancel()
         guard autoPlay else { return }
         watchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: 9_000_000_000)
             guard !Task.isCancelled, let self, self.current?.id == item.id, !self.userPaused else { return }
             let now = self.player.currentTime().seconds
             let kind = self.sourceKind

@@ -168,8 +168,66 @@ actor StreamResolver {
         }
         if let muxed { video.append(.single(muxed)) }
 
+        // YouTube는 일부 영상(주로 음원사 뮤직비디오)에 대해 인증 토큰 없는 요청이면
+        // 처음 약 1분까지만 허용하고 그 뒤는 403으로 막는다 → 중간 이동/계속 재생이 실패.
+        // 뒤쪽 1KB를 요청해 보고 막혀 있으면, 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
+        if let probe = audioFormat ?? videoFormats.first, await isGated(probe),
+           let full = try? await fetchAndroidMuxed(id: id) {
+            video.insert(.single(full), at: 0)
+            audio.insert(.single(full), at: 0)
+        }
+
         guard !video.isEmpty || !audio.isEmpty else { throw AppError.noPlayableStream }
         return Entry(video: video, audio: audio, date: Date())
+    }
+
+    /// 파일 뒤쪽(85%)을 1KB만 요청해서 403이면 "앞부분만 허용"된 영상
+    private static func isGated(_ format: DashFormat) async -> Bool {
+        let length = format.contentLength ?? 0
+        guard length > 100_000 else { return false }
+        let offset = Int(Double(length) * 0.85)
+        var request = URLRequest(url: format.url)
+        request.timeoutInterval = 5
+        request.setValue("bytes=\(offset)-\(offset + 1023)", forHTTPHeaderField: "Range")
+        request.setValue(iosUserAgent, forHTTPHeaderField: "User-Agent")
+        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 403
+    }
+
+    /// Android 앱 클라이언트의 itag 18 (360p 영상+소리 합본) — 끝까지 받아진다
+    private static func fetchAndroidMuxed(id: String) async throws -> URL {
+        let ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip"
+        var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(ua, forHTTPHeaderField: "User-Agent")
+        request.setValue("3", forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue("20.10.38", forHTTPHeaderField: "X-Youtube-Client-Version")
+        let body: [String: Any] = [
+            "context": [
+                "client": [
+                    "clientName": "ANDROID",
+                    "clientVersion": "20.10.38",
+                    "androidSdkVersion": 30,
+                    "osName": "Android",
+                    "osVersion": "11",
+                    "hl": "ko",
+                    "gl": "KR",
+                ],
+            ],
+            "videoId": id,
+            "contentCheckOk": true,
+            "racyCheckOk": true,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let formats = (json["streamingData"] as? [String: Any])?["formats"] as? [[String: Any]],
+              let muxed = formats.first(where: { $0["itag"] as? Int == 18 && $0["url"] is String }),
+              let url = (muxed["url"] as? String).flatMap(URL.init(string:))
+        else { throw AppError.noPlayableStream }
+        return url
     }
 
     // MARK: - YouTubeKit (느린 대체 경로)
@@ -246,6 +304,7 @@ struct DashFormat: Sendable {
     let height: Int
     let initRange: ClosedRange<Int>
     let indexRange: ClosedRange<Int>
+    let contentLength: Int?
 
     var isAudio: Bool { mime.hasPrefix("audio/mp4") }
     var isVideo: Bool { mime.hasPrefix("video/mp4") }
@@ -271,6 +330,7 @@ struct DashFormat: Sendable {
         self.height = d["height"] as? Int ?? 0
         self.initRange = initRange
         self.indexRange = indexRange
+        self.contentLength = Int("\(d["contentLength"] ?? "")")
     }
 
     private static func range(_ any: Any?) -> ClosedRange<Int>? {
