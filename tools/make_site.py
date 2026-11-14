@@ -4,9 +4,9 @@
     python tools/make_site.py [IPA 경로] [--apk KTUBE.apk] [--base https://mistylake.synology.me:8443] [--notes "변경 내용"]
 
 결과: dist/youtube/ 폴더
-    docker-compose.yml, nginx.conf   ← 시놀로지 Container Manager 용 (nginx로 사이트 제공)
-    site/ index.html, manifest.plist, apps.json, icon.png, KTUBE-<버전>.ipa
-이 dist/youtube 안의 내용을 시놀로지 /docker/youtube 에 그대로 올리면 된다.
+    index.html, manifest.xml(+.plist), apps.json, icon.png, KTUBE-<버전>.ipa [, KTUBE.apk]
+이 파일들을 시놀로지 /docker/youtube 에 올리고 Web Station 별칭(youtube)으로 연결하면
+https://mistylake.synology.me/youtube 로 열린다.  (--docker 를 주면 nginx 컨테이너용 파일도 함께 만든다)
 """
 import argparse
 import datetime
@@ -20,17 +20,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 parser = argparse.ArgumentParser()
 parser.add_argument("ipa", nargs="?", default=os.path.join(ROOT, "KTUBE.ipa"))
-parser.add_argument("--base", default="https://mistylake.synology.me:8443")
+parser.add_argument("--base", default="https://mistylake.synology.me/youtube")
 parser.add_argument("--notes", default="")
 parser.add_argument("--apk", default="", help="안드로이드 APK 경로 (있으면 사이트에 함께 올림)")
-parser.add_argument("--out", default=os.path.join(ROOT, "dist", "youtube", "site"))
+parser.add_argument("--out", default=os.path.join(ROOT, "dist", "youtube"))
+parser.add_argument("--docker", action="store_true", help="nginx 컨테이너용 설정 파일도 함께 만든다")
 args = parser.parse_args()
 
-# 사이트 폴더 옆에 시놀로지 Docker 설정 파일을 함께 둔다
-bundle_dir = os.path.dirname(os.path.abspath(args.out))
-os.makedirs(bundle_dir, exist_ok=True)
-for name in ("docker-compose.yml", "nginx.conf", "compose-snippet.yaml"):
-    shutil.copyfile(os.path.join(ROOT, "deploy", "synology", name), os.path.join(bundle_dir, name))
+os.makedirs(args.out, exist_ok=True)
+# (선택) 사이트 폴더 옆에 시놀로지 Docker(nginx) 설정 파일
+if args.docker:
+    bundle_dir = os.path.dirname(os.path.abspath(args.out))
+    for name in ("docker-compose.yml", "nginx.conf", "compose-snippet.yaml"):
+        shutil.copyfile(os.path.join(ROOT, "deploy", "synology", name), os.path.join(bundle_dir, name))
 # 이전 버전 IPA는 지운다 (사이트에는 최신 하나만)
 if os.path.isdir(args.out):
     for old in os.listdir(args.out):
@@ -136,9 +138,11 @@ manifest = {
         },
     }]
 }
-with open(os.path.join(args.out, "manifest.plist"), "wb") as f:
-    plistlib.dump(manifest, f)
-itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.plist", safe="")
+# Web Station 등은 .plist 를 XML 형식으로 알려주지 않을 수 있어 .xml 로도 만들고 그쪽을 쓴다
+for name in ("manifest.plist", "manifest.xml"):
+    with open(os.path.join(args.out, name), "wb") as f:
+        plistlib.dump(manifest, f)
+itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.xml", safe="")
 if signed:
     direct = (f'<a class="btn primary" href="{itms}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이 아이폰에 바로 설치</a>'
               f'<p class="hint">서명된 IPA입니다 (번들 ID <code>{bundle_id}</code>'

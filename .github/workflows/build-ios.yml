@@ -74,7 +74,7 @@ jobs:
 
       # ── 유료 개발자 계정 Ad Hoc 서명 (시크릿이 등록돼 있을 때만) ──────────────
       # 필요한 저장소 시크릿: IOS_P12_BASE64, IOS_P12_PASSWORD, IOS_PROFILE_BASE64
-      # 선택: SITE_BASE_URL (기본 https://mistylake.synology.me:8443)
+      # 선택: SITE_BASE_URL (기본 https://mistylake.synology.me/youtube)
       #       SYNOLOGY_WEBDAV_URL / SYNOLOGY_WEBDAV_USER / SYNOLOGY_WEBDAV_PASSWORD → 시놀로지 자동 업로드
       - name: Sign IPA (Ad Hoc) and build install site
         id: sign
@@ -121,8 +121,8 @@ jobs:
           ls -lh KTUBE-signed.ipa
 
           # 시놀로지에 올릴 설치 사이트 (index.html, manifest.plist, apps.json, icon.png, IPA)
-          BASE="${SITE_BASE_URL:-https://mistylake.synology.me:8443}"
-          python3 tools/make_site.py KTUBE-signed.ipa --base "$BASE" --out site-out/youtube/site \
+          BASE="${SITE_BASE_URL:-https://mistylake.synology.me/youtube}"
+          python3 tools/make_site.py KTUBE-signed.ipa --base "$BASE" --out site-out/youtube \
             --notes "$(git log -1 --pretty=%s)"
           (cd site-out/youtube && zip -qry ../../ktube-site.zip .)
           echo "signed=true" >> "$GITHUB_OUTPUT"
@@ -142,7 +142,7 @@ jobs:
           DAV_PASS: ${{ secrets.SYNOLOGY_WEBDAV_PASSWORD }}
         run: |
           if [ -z "$DAV_URL" ]; then echo "SYNOLOGY_WEBDAV_URL 시크릿이 없어 자동 업로드를 건너뜁니다."; exit 0; fi
-          cd site-out/youtube/site
+          cd site-out/youtube
           for f in *; do
             code=$(curl -s -o /dev/null -w "%{http_code}" -u "$DAV_USER:$DAV_PASS" -T "$f" "${DAV_URL%/}/$f")
             echo "upload $f -> $code"
