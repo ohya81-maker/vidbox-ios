@@ -6,6 +6,8 @@ struct Playlist: Identifiable, Codable, Hashable {
     var name: String
     var items: [VideoItem] = []
     var created: Date = Date()
+    /// 음악 플레이어에서 만든 폴더 (음악 탭 「저장됨」에 표시, 오디오로 재생)
+    var isMusic: Bool? = nil
 }
 
 /// 최근 검색어 + 그 검색의 대표 영상 썸네일 (YouTube처럼 옆에 사진)
@@ -90,13 +92,15 @@ final class LibraryStore: ObservableObject {
     // MARK: 저장 폴더
 
     @discardableResult
-    func createPlaylist(_ name: String) -> UUID {
+    func createPlaylist(_ name: String, music: Bool = false) -> UUID {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let playlist = Playlist(name: trimmed.isEmpty ? "새 폴더" : trimmed)
+        let playlist = Playlist(name: trimmed.isEmpty ? (music ? "내 음악" : "새 폴더") : trimmed, isMusic: music)
         playlists.insert(playlist, at: 0)
         savePlaylists()
         return playlist.id
     }
+
+    var musicPlaylists: [Playlist] { playlists.filter { $0.isMusic == true } }
 
     func playlist(_ id: UUID) -> Playlist? {
         playlists.first { $0.id == id }

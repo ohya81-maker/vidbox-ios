@@ -52,14 +52,6 @@ struct RootView: View {
             let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !q.isEmpty { searchQuery = q }
         }
-        // 영상을 접으면 화면 모서리에 떠 있는 작은 동영상 창 (PiP 스타일)
-        .overlay {
-            if player.current != nil && !player.audioOnly && !player.isExpanded {
-                FloatingVideoPlayer()
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
-            }
-        }
-        .animation(.spring(duration: 0.3), value: player.current == nil || player.audioOnly || player.isExpanded)
         .fullScreenCover(isPresented: $player.isExpanded) {
             PlayerView()
         }
@@ -105,8 +97,8 @@ private struct MiniPlayerInset: ViewModifier {
 
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 0) {
-            // 막대형 미니 플레이어는 음악(오디오 전용)일 때만. 영상은 떠 있는 작은 창으로 보인다.
-            if player.current != nil && player.audioOnly {
+            // 하단 재생 막대 (영상은 막대 안에서 계속 재생)
+            if player.current != nil {
                 MiniPlayerView()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }

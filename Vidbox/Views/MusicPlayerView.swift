@@ -47,7 +47,7 @@ struct MusicPlayerView: View {
         .foregroundStyle(.white)
         .buttonStyle(.plain)
         .sheet(isPresented: $showSave) {
-            if let item = player.current { SaveToFolderSheet(item: item) }
+            if let item = player.current { SaveToFolderSheet(item: item, music: true) }
         }
     }
 

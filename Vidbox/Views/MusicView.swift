@@ -66,6 +66,7 @@ struct MusicView: View {
     @State private var suggestions: [String] = []
     @FocusState private var searchFocused: Bool
 
+    static let savedChip = "저장됨"
     private let moods = ["운동", "휴식", "집중", "출퇴근", "신나는", "잠잘 때", "드라이브", "카페", "비 오는 날", "슬픔"]
 
     var body: some View {
@@ -85,6 +86,9 @@ struct MusicView: View {
                         suggestionList
                     } else if !searchedQuery.isEmpty {
                         searchResultList
+                    } else if selectedMood == Self.savedChip {
+                        moodBar
+                        SavedFoldersList(music: true)
                     } else {
                         moodBar
 
@@ -109,6 +113,7 @@ struct MusicView: View {
             // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
             .refreshable { await Task { await model.reload() }.value }
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
             .task { await model.loadAll() }
             .task(id: searchText) {
                 guard searchFocused, !searchText.isEmpty else { suggestions = []; return }
@@ -224,6 +229,10 @@ struct MusicView: View {
     private var moodBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                // 맨 앞: 음악에서 저장한 폴더
+                ChipButton(title: Self.savedChip, isOn: selectedMood == Self.savedChip) {
+                    selectedMood = selectedMood == Self.savedChip ? nil : Self.savedChip
+                }
                 ForEach(moods, id: \.self) { mood in
                     ChipButton(title: mood, isOn: selectedMood == mood) {
                         selectedMood = selectedMood == mood ? nil : mood

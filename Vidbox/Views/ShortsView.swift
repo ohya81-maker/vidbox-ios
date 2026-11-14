@@ -183,14 +183,6 @@ struct ShortsView: View {
         .ignoresSafeArea()
         }
         .background(Color.black)
-        .overlay(alignment: .topLeading) {
-            Text("Shorts")
-                .font(.title2.weight(.bold))
-                .foregroundStyle(.white)
-                .shadow(radius: 4)
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-        }
         .overlay {
             if feed.items.isEmpty {
                 if let message = feed.errorMessage {
@@ -244,10 +236,10 @@ struct ShortPage: View {
                 .overlay {
                     AsyncImage(url: URL(string: "https://i.ytimg.com/vi/\(item.id)/oar2.jpg")) { phase in
                         if let image = phase.image {
-                            image.resizable().scaledToFit()
+                            image.resizable().scaledToFill()
                         } else if phase.error != nil {
                             AsyncImage(url: item.bestThumbnail) { image in
-                                image.resizable().scaledToFit()
+                                image.resizable().scaledToFill()
                             } placeholder: { Color.black }
                         } else {
                             Color.black
@@ -258,7 +250,8 @@ struct ShortPage: View {
 
             if isCurrent {
                 // 영상도 원본 비율 그대로 (잘라서 확대하지 않음)
-                VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect)
+                // 화면 끝까지 꽉 채움 (YouTube 쇼츠와 같은 방식, 좌우가 살짝 잘림)
+                VideoSurface(avPlayer: shorts.player, gravity: .resizeAspectFill)
                     .opacity(shorts.isReady ? 1 : 0)
                 if !shorts.isReady && !shorts.failed {
                     ProgressView().tint(.white)
@@ -305,10 +298,6 @@ struct ShortPage: View {
                     }
                     ShareLink(item: item.shareURL) {
                         sideLabel("arrowshape.turn.up.right", label: "공유")
-                    }
-                    sideButton("arrow.up.left.and.arrow.down.right", label: "크게") {
-                        shorts.pause()
-                        player.play(item)
                     }
                 }
                 .buttonStyle(.plain)

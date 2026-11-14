@@ -49,6 +49,41 @@ final class FeedViewModel: ObservableObject {
         isLoading = false
     }
 
+    /// 여러 검색어 결과를 번갈아 섞어서 보여준다 (열 때마다 다른 홈 화면). 이미 본 영상은 뺀다.
+    func loadMixed(_ queries: [String], exclude: Set<String>) async {
+        guard let first = queries.first else { return }
+        source = .search(first)
+        requestID += 1
+        let id = requestID
+        isLoading = true
+        errorMessage = nil
+        let pages: [FeedPage] = await withTaskGroup(of: (Int, FeedPage?).self) { group in
+            for (index, q) in queries.enumerated() {
+                group.addTask { (index, try? await InnerTubeClient.shared.search(q)) }
+            }
+            var result = [FeedPage?](repeating: nil, count: queries.count)
+            for await (index, page) in group { result[index] = page }
+            return result.compactMap { $0 }
+        }
+        guard id == requestID else { return }
+        var seen = Set<String>()
+        var mixed: [VideoItem] = []
+        let lists = pages.map { $0.items.filter { !exclude.contains($0.id) } }
+        let longest = lists.map(\.count).max() ?? 0
+        for i in 0..<longest {
+            for list in lists.shuffled() where i < list.count {
+                if seen.insert(list[i].id).inserted { mixed.append(list[i]) }
+            }
+        }
+        if !mixed.isEmpty {
+            items = mixed
+            continuation = pages.first?.continuation
+        } else if items.isEmpty {
+            errorMessage = "불러오지 못했습니다."
+        }
+        isLoading = false
+    }
+
     func loadMoreIfNeeded(current item: VideoItem) async {
         guard !isLoading, let token = continuation,
               let index = items.firstIndex(where: { $0.id == item.id }),
@@ -138,7 +173,7 @@ struct HomeView: View {
                 }
             }
             // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
-            .refreshable { await Task { await model.reload() }.value }
+            .refreshable { await Task { await loadSelected() }.value }  // 당길 때마다 새로 섞인 홈
             .hidesTabBarOnScroll()
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }
@@ -147,11 +182,21 @@ struct HomeView: View {
         }
     }
 
+    /// 로그인하지 않았을 때 「전체」에 섞어 쓸 주제들 (열 때마다 3개를 무작위로)
+    private let homePool = [
+        "인기 동영상", "요즘 화제 영상", "인기 급상승", "예능 하이라이트", "드라마 명장면", "최신 뮤직비디오",
+        "웃긴 영상", "브이로그", "먹방", "여행 영상", "스포츠 명장면", "게임 하이라이트", "IT 리뷰",
+        "다큐멘터리", "라이브 클립", "커버곡", "애니메이션", "자동차 리뷰", "동물 영상", "요리 영상",
+    ]
+
     private func loadSelected() async {
         if chips[selected].title == "저장됨" { return }
         if selected == 0 && account.isLoggedIn {
             await model.load(source: .browse("FEwhat_to_watch"))
             if model.items.isEmpty { await model.load(chips[0].query) }
+        } else if selected == 0 {
+            let watched = Set(LibraryStore.shared.history.prefix(200).map(\.id))
+            await model.loadMixed(Array(homePool.shuffled().prefix(3)), exclude: watched)
         } else {
             await model.load(chips[selected].query)
         }

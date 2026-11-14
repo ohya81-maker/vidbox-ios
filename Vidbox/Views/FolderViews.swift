@@ -4,6 +4,8 @@ import SwiftUI
 
 struct SaveToFolderSheet: View {
     let item: VideoItem
+    /// 음악 플레이어에서 열면 음악 폴더만 보여주고, 새 폴더도 음악 폴더로 만든다
+    var music = false
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.dismiss) private var dismiss
     @State private var showNewFolder = false
@@ -28,13 +30,15 @@ struct SaveToFolderSheet: View {
                     }
                 }
 
-                Section("저장할 폴더 (여러 개 선택 가능)") {
-                    folderRow(name: LibraryStore.watchLaterName, icon: "clock", count: library.saved.count,
-                              checked: library.isSaved(item)) {
-                        library.toggleSaved(item)
+                Section(music ? "저장할 음악 폴더 (여러 개 선택 가능)" : "저장할 폴더 (여러 개 선택 가능)") {
+                    if !music {
+                        folderRow(name: LibraryStore.watchLaterName, icon: "clock", count: library.saved.count,
+                                  checked: library.isSaved(item)) {
+                            library.toggleSaved(item)
+                        }
                     }
-                    ForEach(library.playlists) { folder in
-                        folderRow(name: folder.name, icon: "folder", count: folder.items.count,
+                    ForEach(music ? library.musicPlaylists : library.playlists) { folder in
+                        folderRow(name: folder.name, icon: folder.isMusic == true ? "music.note.list" : "folder", count: folder.items.count,
                                   checked: library.contains(item, in: folder.id)) {
                             library.toggle(item, in: folder.id)
                         }
@@ -51,7 +55,7 @@ struct SaveToFolderSheet: View {
             .alert("새 폴더", isPresented: $showNewFolder) {
                 TextField("폴더 이름", text: $newName)
                 Button("만들고 저장") {
-                    let id = library.createPlaylist(newName)
+                    let id = library.createPlaylist(newName, music: music)
                     library.toggle(item, in: id)
                     newName = ""
                 }
@@ -94,6 +98,8 @@ enum FolderRef: Hashable {
 }
 
 struct SavedFoldersList: View {
+    /// 음악 탭: 음악 폴더만
+    var music = false
     @EnvironmentObject private var library: LibraryStore
     @State private var showNewFolder = false
     @State private var newName = ""
@@ -101,7 +107,7 @@ struct SavedFoldersList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("저장한 리스트").font(.title3.weight(.bold))
+                Text(music ? "저장한 음악" : "저장한 리스트").font(.title3.weight(.bold))
                 Spacer()
                 Button { showNewFolder = true } label: {
                     Label("새 폴더", systemImage: "plus")
@@ -115,12 +121,15 @@ struct SavedFoldersList: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
-            folderLink(.watchLater, name: LibraryStore.watchLaterName, items: library.saved, icon: "clock")
-            ForEach(library.playlists) { folder in
-                folderLink(.playlist(folder.id), name: folder.name, items: folder.items, icon: "folder")
+            if !music {
+                folderLink(.watchLater, name: LibraryStore.watchLaterName, items: library.saved, icon: "clock")
+            }
+            ForEach(music ? library.musicPlaylists : library.playlists) { folder in
+                folderLink(.playlist(folder.id), name: folder.name, items: folder.items,
+                           icon: folder.isMusic == true ? "music.note.list" : "folder")
             }
 
-            if library.playlists.isEmpty {
+            if (music ? library.musicPlaylists : library.playlists).isEmpty {
                 Text("음악이나 영상의 저장(⊕) 버튼으로 폴더를 만들어 담을 수 있어요.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -130,7 +139,7 @@ struct SavedFoldersList: View {
         .padding(.bottom, 20)
         .alert("새 폴더", isPresented: $showNewFolder) {
             TextField("폴더 이름", text: $newName)
-            Button("만들기") { library.createPlaylist(newName); newName = "" }
+            Button("만들기") { library.createPlaylist(newName, music: music); newName = "" }
             Button("취소", role: .cancel) { newName = "" }
         }
     }
@@ -206,6 +215,11 @@ struct FolderDetailView: View {
         }
     }
 
+    private var isMusicFolder: Bool {
+        if case .playlist(let id) = ref { return library.playlist(id)?.isMusic == true }
+        return false
+    }
+
     private var items: [VideoItem] {
         switch ref {
         case .watchLater: return library.saved
@@ -223,7 +237,8 @@ struct FolderDetailView: View {
                     Text("\(items.count)개").font(.subheadline).foregroundStyle(.secondary)
                     HStack(spacing: 10) {
                         actionButton("재생", icon: "play.fill", filled: true) {
-                            if let first = items.first { player.play(first, queue: items, audio: false) }
+                            // 음악 폴더는 오디오로, 일반 폴더는 영상으로
+                            if let first = items.first { player.play(first, queue: items, audio: isMusicFolder) }
                         }
                         actionButton("음악으로 듣기", icon: "headphones", filled: false) {
                             if let first = items.first { player.play(first, queue: items, audio: true) }
