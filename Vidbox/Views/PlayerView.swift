@@ -40,6 +40,8 @@ struct PlayerView: View {
     private var portrait: some View {
         VStack(spacing: 0) {
             PlayerStage(fullscreen: false)
+                // 아래 목록과 높이를 반씩 나누지 않고, 영상 비율만큼의 높이를 먼저 차지한다
+                .layoutPriority(1)
                 .offset(y: dragOffset)
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 20)
@@ -162,7 +164,12 @@ struct PlayerStage: View {
     /// 재생 화면 비율: 가로 영상은 16:9, 세로 영상(직캠 등)은 YouTube처럼 더 길게 — 최대 2:3 (세로가 가로의 1.5배)
     private var stageAspect: CGFloat {
         if player.audioOnly { return 16 / 9 }
-        return min(16 / 9, max(player.videoAspect, 2 / 3))
+        return min(16 / 9, max(player.videoAspect, 0.65))
+    }
+
+    /// 세로 영상은 YouTube처럼 가로를 꽉 채우고 위아래를 살짝 잘라낸다 (전체화면에선 전부 보이게)
+    private var fillsStage: Bool {
+        !fullscreen && !player.audioOnly && player.videoAspect < 0.9
     }
 
     var body: some View {
@@ -172,7 +179,7 @@ struct PlayerStage: View {
             if player.audioOnly, let item = player.current {
                 audioArtwork(item)
             } else {
-                VideoSurface(manager: player)
+                VideoSurface(manager: player, gravity: fillsStage ? .resizeAspectFill : .resizeAspect)
             }
 
             // 영상 로딩 중에는 썸네일을 먼저 보여줘서 체감 지연을 줄임
@@ -218,6 +225,7 @@ struct PlayerStage: View {
         }
         .onLongPressGesture(minimumDuration: 0.8) { showDiagnostics.toggle() }
         .stageFrame(fullscreen, aspect: stageAspect)
+        .clipped()
         .environment(\.colorScheme, .dark)
         .onAppear { scheduleHide() }
     }
