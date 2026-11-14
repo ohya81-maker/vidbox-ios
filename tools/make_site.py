@@ -29,6 +29,20 @@ build = re.search(r'CURRENT_PROJECT_VERSION: "([^"]+)"', project).group(1)
 bundle_id = re.search(r"PRODUCT_BUNDLE_IDENTIFIER: (\S+)", project).group(1)
 min_os = re.search(r'iOS: "([^"]+)"', project).group(1)
 
+# IPA 안의 Info.plist / 서명 여부를 직접 읽는다.
+# (Sideloadly 등으로 서명하면 번들 ID가 바뀌므로 manifest.plist에는 IPA 안의 값을 써야 설치된다)
+import plistlib
+import zipfile
+with zipfile.ZipFile(args.ipa) as z:
+    names = z.namelist()
+    info_name = next(n for n in names if re.fullmatch(r"Payload/[^/]+\.app/Info\.plist", n))
+    app_dir = info_name.rsplit("/", 1)[0]
+    info = plistlib.loads(z.read(info_name))
+    signed = f"{app_dir}/embedded.mobileprovision" in names and any(n.startswith(f"{app_dir}/_CodeSignature/") for n in names)
+bundle_id = info.get("CFBundleIdentifier", bundle_id)
+version = info.get("CFBundleShortVersionString", version)
+build = info.get("CFBundleVersion", build)
+
 base = args.base.rstrip("/")
 os.makedirs(args.out, exist_ok=True)
 
@@ -78,7 +92,34 @@ source = {
 with open(os.path.join(args.out, "apps.json"), "w", encoding="utf-8") as f:
     json.dump(source, f, ensure_ascii=False, indent=2)
 
+# itms-services 직접 설치용 manifest.plist (서명된 IPA일 때만 실제로 설치됨)
+manifest = {
+    "items": [{
+        "assets": [
+            {"kind": "software-package", "url": f"{base}/{ipa_name}"},
+            {"kind": "display-image", "url": f"{base}/icon.png"},
+            {"kind": "full-size-image", "url": f"{base}/icon.png"},
+        ],
+        "metadata": {
+            "bundle-identifier": bundle_id,
+            "bundle-version": version,
+            "kind": "software",
+            "title": "KTUBE",
+        },
+    }]
+}
+with open(os.path.join(args.out, "manifest.plist"), "wb") as f:
+    plistlib.dump(manifest, f)
+itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.plist", safe="")
+if signed:
+    direct = (f'<a class="btn primary" href="{itms}">이 아이폰에 바로 설치</a>'
+              f'<p class="hint">서명된 IPA입니다 (번들 ID <code>{bundle_id}</code>). 설치 후 설정 → 일반 → VPN 및 기기 관리에서 신뢰를 눌러주세요.</p>')
+else:
+    direct = ('<p class="hint">지금 올린 IPA는 서명되지 않아 바로 설치할 수 없습니다. '
+              '서명된 IPA로 이 페이지를 다시 만들면 여기에 「바로 설치」 버튼이 생깁니다.</p>')
+
 page = open(os.path.join(ROOT, "site", "index.html"), encoding="utf-8").read()
+page = page.replace("{{DIRECT_INSTALL}}", direct)
 source_url = f"{base}/apps.json"
 for key, value in {
     "{{VERSION}}": version,
