@@ -2,6 +2,26 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
+// MARK: - Liquid Glass (iOS 26+) / 이전 버전은 반투명 재질로 대체
+
+extension View {
+    @ViewBuilder
+    func glass<S: Shape>(_ shape: S, interactive: Bool = false) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+        }
+    }
+
+    /// 영상 위 컨트롤용 원형 유리 버튼 모양
+    func glassCircle(size: CGFloat) -> some View {
+        self.frame(width: size, height: size)
+            .contentShape(Circle())
+            .glass(Circle(), interactive: true)
+    }
+}
+
 // MARK: - 썸네일
 
 struct ThumbnailView: View {
@@ -9,10 +29,11 @@ struct ThumbnailView: View {
     var duration: String?
     var isLive = false
     var cornerRadius: CGFloat = 0
+    var aspect: CGFloat = 16 / 9
 
     var body: some View {
         Color(.secondarySystemBackground)
-            .aspectRatio(16 / 9, contentMode: .fit)
+            .aspectRatio(aspect, contentMode: .fit)
             .overlay {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
@@ -25,19 +46,19 @@ struct ThumbnailView: View {
             .clipped()
             .overlay(alignment: .bottomTrailing) {
                 if isLive {
-                    badge("실시간", background: .red)
+                    badge("● 실시간", background: .black.opacity(0.75))
                 } else if let duration, !duration.isEmpty {
-                    badge(duration, background: .black.opacity(0.8))
+                    badge(duration, background: .black.opacity(0.75))
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
     private func badge(_ text: String, background: Color) -> some View {
         Text(text)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(background, in: RoundedRectangle(cornerRadius: 4))
             .padding(6)
@@ -55,7 +76,7 @@ struct AvatarView: View {
             } else {
                 Image(systemName: "person.crop.circle.fill")
                     .resizable()
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(.gray.opacity(0.6))
             }
         }
         .frame(width: size, height: size)
@@ -68,7 +89,6 @@ struct AvatarView: View {
 struct VideoCard: View {
     let item: VideoItem
     @EnvironmentObject private var player: PlayerManager
-    @EnvironmentObject private var library: LibraryStore
 
     var body: some View {
         Button {
@@ -97,7 +117,7 @@ struct VideoCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.bottom, 16)
+        .padding(.bottom, 18)
     }
 }
 
@@ -106,15 +126,23 @@ struct VideoCard: View {
 struct VideoRow: View {
     let item: VideoItem
     var expand = true
+    var queue: [VideoItem]? = nil
     @EnvironmentObject private var player: PlayerManager
 
     var body: some View {
         Button {
-            player.play(item, expand: expand)
+            player.play(item, queue: queue, expand: expand)
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 ThumbnailView(url: item.bestThumbnail, duration: item.duration, isLive: item.isLive, cornerRadius: 8)
                     .frame(width: 160)
+                    .overlay {
+                        if player.current?.id == item.id {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(.black.opacity(0.45))
+                                .overlay(Image(systemName: "waveform").foregroundStyle(.white).font(.title3))
+                        }
+                    }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title)
                         .font(.subheadline.weight(.medium))
@@ -176,31 +204,72 @@ final class PlayerUIView: UIView {
 }
 
 struct VideoSurface: UIViewRepresentable {
-    let player: PlayerManager
+    /// 메인 플레이어(백그라운드 처리 포함)
+    var manager: PlayerManager? = nil
+    /// 쇼츠처럼 별도 플레이어를 쓸 때
+    var avPlayer: AVPlayer? = nil
+    var gravity: AVLayerVideoGravity = .resizeAspect
 
     func makeUIView(context: Context) -> PlayerUIView {
         let view = PlayerUIView()
         view.backgroundColor = .black
-        view.playerLayer.videoGravity = .resizeAspect
-        player.register(view.playerLayer)
+        view.playerLayer.videoGravity = gravity
+        if let manager {
+            manager.register(view.playerLayer)
+        } else {
+            view.playerLayer.player = avPlayer
+        }
         return view
     }
 
-    func updateUIView(_ uiView: PlayerUIView, context: Context) {}
+    func updateUIView(_ uiView: PlayerUIView, context: Context) {
+        uiView.playerLayer.videoGravity = gravity
+        if manager == nil, uiView.playerLayer.player !== avPlayer {
+            uiView.playerLayer.player = avPlayer
+        }
+    }
 }
 
 // MARK: - 앱 로고
 
 struct AppLogo: View {
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "play.rectangle.fill")
-                .font(.title2)
-                .foregroundStyle(.red)
+        HStack(spacing: 5) {
+            Image(systemName: "play.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 20)
+                .background(
+                    LinearGradient(colors: [Color(red: 1, green: 0.32, blue: 0.28), Color(red: 0.75, green: 0, blue: 0.15)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                )
             Text("Vidbox")
-                .font(.title3.weight(.bold))
-                .tracking(-0.5)
+                .font(.system(size: 20, weight: .bold))
+                .tracking(-0.6)
         }
+        .fixedSize()
+    }
+}
+
+// MARK: - 칩
+
+struct ChipButton: View {
+    let title: String
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .foregroundStyle(isOn ? Color(.systemBackground) : .primary)
+                .background(isOn ? Color.primary : Color(.tertiarySystemFill),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 

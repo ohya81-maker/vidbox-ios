@@ -15,25 +15,26 @@ final class InnerTubeClient {
         session = URLSession(configuration: config)
     }
 
-    private var context: [String: Any] {
+    private func context(music: Bool) -> [String: Any] {
         [
             "client": [
-                "clientName": "WEB",
-                "clientVersion": "2.20251110.01.00",
+                "clientName": music ? "WEB_REMIX" : "WEB",
+                "clientVersion": music ? "1.20251110.01.00" : "2.20251110.01.00",
                 "hl": "ko",
                 "gl": "KR",
             ],
         ]
     }
 
-    private func post(_ endpoint: String, body: [String: Any]) async throws -> Any {
-        var request = URLRequest(url: URL(string: base + endpoint + "?prettyPrint=false")!)
+    private func post(_ endpoint: String, body: [String: Any], music: Bool = false) async throws -> Any {
+        let host = music ? "https://music.youtube.com" : "https://www.youtube.com"
+        var request = URLRequest(url: URL(string: host + "/youtubei/v1/" + endpoint + "?prettyPrint=false")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue(host, forHTTPHeaderField: "Origin")
         var payload = body
-        payload["context"] = context
+        payload["context"] = context(music: music)
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await session.data(for: request)
@@ -55,6 +56,26 @@ final class InnerTubeClient {
     func related(videoID: String) async throws -> [VideoItem] {
         let json = try await post("next", body: ["videoId": videoID])
         return Self.parsePage(json).items.filter { $0.id != videoID }
+    }
+
+    /// 쇼츠 목록: 검색 결과 안의 쇼츠 선반 + 3분 이하 세로 영상
+    func shorts(_ query: String, continuation: String? = nil) async throws -> FeedPage {
+        var body: [String: Any] = ["query": query]
+        if let continuation { body = ["continuation": continuation] }
+        return Self.parseShortsPage(try await post("search", body: body))
+    }
+
+    /// YouTube Music 노래 검색. 실패하면 일반 검색으로 대체한다.
+    func musicSongs(_ query: String) async -> [VideoItem] {
+        if let json = try? await post("search", body: ["query": query, "params": "EgWKAQIIAWoKEAkQBRAKEAMQBA=="], music: true) {
+            let songs = Self.parseMusicPage(json)
+            if songs.count >= 3 { return songs }
+        }
+        if let json = try? await post("search", body: ["query": query], music: true) {
+            let songs = Self.parseMusicPage(json)
+            if songs.count >= 3 { return songs }
+        }
+        return (try? await search(query + " 노래"))?.items ?? []
     }
 
     func suggestions(for query: String) async -> [String] {
@@ -101,6 +122,114 @@ final class InnerTubeClient {
             }
         }
         return FeedPage(items: items, continuation: token)
+    }
+
+    static func parseShortsPage(_ json: Any) -> FeedPage {
+        var items: [VideoItem] = []
+        var seen = Set<String>()
+        var token: String?
+
+        walk(json) { key, value in
+            guard let dict = value as? [String: Any] else { return }
+            var parsed: VideoItem?
+            switch key {
+            case "shortsLockupViewModel":
+                parsed = parseShortsLockup(dict)
+            case "reelItemRenderer":
+                if let id = dict["videoId"] as? String {
+                    parsed = VideoItem(id: id, title: text(dict["headline"]) ?? "", channel: "",
+                                       channelThumbnail: nil, thumbnail: lastThumbnail(dict["thumbnail"]),
+                                       duration: nil, views: text(dict["viewCountText"]), published: nil, isLive: false)
+                }
+            case "videoRenderer":
+                if let video = parseVideoRenderer(dict), let seconds = seconds(of: video.duration), seconds <= 180 {
+                    parsed = video
+                }
+            case "continuationCommand":
+                if token == nil { token = dict["token"] as? String }
+            default:
+                break
+            }
+            if let parsed, seen.insert(parsed.id).inserted {
+                items.append(parsed)
+            }
+        }
+        return FeedPage(items: items, continuation: token)
+    }
+
+    static func parseMusicPage(_ json: Any) -> [VideoItem] {
+        var items: [VideoItem] = []
+        var seen = Set<String>()
+        walk(json) { key, value in
+            guard key == "musicResponsiveListItemRenderer", let d = value as? [String: Any] else { return }
+            var videoID = dig(d, "playlistItemData", "videoId") as? String
+            if videoID == nil {
+                walk(d) { k, v in
+                    if videoID == nil, k == "watchEndpoint", let id = dig(v, "videoId") as? String { videoID = id }
+                }
+            }
+            guard let id = videoID, seen.insert(id).inserted else { return }
+
+            let columns = d["flexColumns"] as? [[String: Any]] ?? []
+            func column(_ i: Int) -> [String] {
+                guard columns.count > i,
+                      let runs = dig(columns[i], "musicResponsiveListItemFlexColumnRenderer", "text", "runs") as? [[String: Any]]
+                else { return [] }
+                return runs.compactMap { $0["text"] as? String }
+                    .filter { $0.trimmingCharacters(in: .whitespaces) != "•" && !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            }
+            let title = column(0).joined()
+            let meta = column(1)
+            let duration = meta.last.flatMap { seconds(of: $0) != nil ? $0 : nil }
+            let artist = meta.first { seconds(of: $0) == nil && !$0.hasPrefix("노래") && !$0.hasPrefix("동영상") && $0 != "Song" && $0 != "Video" } ?? ""
+            let thumb = lastThumbnail(dig(d, "thumbnail", "musicThumbnailRenderer", "thumbnail"))
+
+            items.append(VideoItem(id: id, title: title, channel: artist, channelThumbnail: nil,
+                                   thumbnail: upscaleMusicThumbnail(thumb), duration: duration,
+                                   views: nil, published: nil, isLive: false))
+        }
+        return items
+    }
+
+    /// "3:45", "1:02:03" → 초. 형식이 아니면 nil
+    static func seconds(of text: String?) -> Int? {
+        guard let text, !text.isEmpty else { return nil }
+        let parts = text.split(separator: ":")
+        guard (2...3).contains(parts.count) else { return nil }
+        var total = 0
+        for part in parts {
+            guard let n = Int(part) else { return nil }
+            total = total * 60 + n
+        }
+        return total
+    }
+
+    private static func upscaleMusicThumbnail(_ url: URL?) -> URL? {
+        guard let url else { return nil }
+        let s = url.absoluteString
+        if let range = s.range(of: #"=w\d+-h\d+"#, options: .regularExpression) {
+            return URL(string: s.replacingCharacters(in: range, with: "=w400-h400"))
+        }
+        return url
+    }
+
+    private static func parseShortsLockup(_ d: [String: Any]) -> VideoItem? {
+        var id = dig(d, "onTap", "innertubeCommand", "reelWatchEndpoint", "videoId") as? String
+        if id == nil, let entity = d["entityId"] as? String {
+            id = entity.replacingOccurrences(of: "shorts-shelf-item-", with: "")
+        }
+        guard let id, !id.isEmpty else { return nil }
+        return VideoItem(
+            id: id,
+            title: dig(d, "overlayMetadata", "primaryText", "content") as? String ?? "",
+            channel: "",
+            channelThumbnail: nil,
+            thumbnail: lastSource(dig(d, "thumbnail", "sources")),
+            duration: nil,
+            views: dig(d, "overlayMetadata", "secondaryText", "content") as? String,
+            published: nil,
+            isLive: false
+        )
     }
 
     private static func walk(_ node: Any, _ visit: (String, Any) -> Void) {

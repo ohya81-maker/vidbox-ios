@@ -2,12 +2,12 @@ import AVFoundation
 import MediaPlayer
 import SwiftUI
 import UIKit
-import YouTubeKit
 
 /// 앱 전체에서 하나만 존재하는 플레이어.
 /// - 백그라운드/화면 꺼짐: AVAudioSession(.playback) + UIBackgroundModes(audio)
 ///   + 백그라운드 진입 시 AVPlayerLayer에서 플레이어를 떼어내어 영상 트랙 때문에 멈추지 않게 함
 /// - 잠금화면/제어센터: MPNowPlayingInfoCenter + MPRemoteCommandCenter
+/// - 재생목록(queue): 음악 탭처럼 목록을 넘겨주면 그 순서대로, 없으면 추천 영상 순서로 다음 곡 재생
 @MainActor
 final class PlayerManager: ObservableObject {
     static let shared = PlayerManager()
@@ -19,11 +19,20 @@ final class PlayerManager: ObservableObject {
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var related: [VideoItem] = []
-    @Published var isExpanded = false
+    @Published private(set) var queue: [VideoItem] = []
+    /// 현재 재생 중인 스트림이 오디오 전용인지
+    @Published private(set) var audioOnly = false
+    @Published var isExpanded = false {
+        didSet { if !isExpanded && isFullscreen { setFullscreen(false) } }
+    }
+    @Published private(set) var isFullscreen = false
     @Published var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoplay, forKey: "autoplay") }
     }
-    @Published private(set) var audioOnly: Bool = UserDefaults.standard.bool(forKey: "audioOnly")
+    /// 새 영상을 열 때 기본으로 오디오 전용으로 재생할지 (보관함 설정)
+    @Published var audioOnlyPreference: Bool = UserDefaults.standard.bool(forKey: "audioOnly") {
+        didSet { UserDefaults.standard.set(audioOnlyPreference, forKey: "audioOnly") }
+    }
 
     let player = AVPlayer()
 
@@ -36,8 +45,19 @@ final class PlayerManager: ObservableObject {
     private var isInBackground = false
     private let layers = NSHashTable<AVPlayerLayer>.weakObjects()
 
+    /// 재생목록이 있으면 그 다음 곡들, 없으면 추천 영상
+    var upNext: [VideoItem] {
+        if let current, let index = queue.firstIndex(where: { $0.id == current.id }) {
+            return Array(queue.dropFirst(index + 1))
+        }
+        return related
+    }
+
+    var isQueueMode: Bool { !queue.isEmpty }
+
     private init() {
-        player.automaticallyWaitsToMinimizeStalling = true
+        // 버퍼를 오래 기다리지 않고 바로 재생 시작
+        player.automaticallyWaitsToMinimizeStalling = false
         configureAudioSession()
         configureRemoteCommands()
         observePlayer()
@@ -46,7 +66,19 @@ final class PlayerManager: ObservableObject {
 
     // MARK: - Public controls
 
-    func play(_ item: VideoItem, expand: Bool = true) {
+    func play(_ item: VideoItem, queue newQueue: [VideoItem]? = nil, audio: Bool? = nil, expand: Bool = true) {
+        let continuingQueue = newQueue == nil && queue.contains { $0.id == item.id }
+        if let newQueue {
+            queue = newQueue
+        } else if !continuingQueue {
+            queue = []
+        }
+        if let audio {
+            audioOnly = audio
+        } else if !continuingQueue {
+            audioOnly = audioOnlyPreference
+        }
+
         loadTask?.cancel()
         current = item
         isLoading = true
@@ -62,12 +94,13 @@ final class PlayerManager: ObservableObject {
         updateNowPlaying()
         loadArtwork(for: item)
 
-        let audioOnly = self.audioOnly
+        let wantAudio = audioOnly
         loadTask = Task { [weak self] in
             do {
-                let url = try await Self.resolveStreamURL(id: item.id, audioOnly: audioOnly)
+                let url = try await StreamResolver.shared.resolve(id: item.id, audioOnly: wantAudio)
                 guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
                 self.startPlayback(url: url, seekTo: 0)
+                self.prefetchNext()
             } catch {
                 guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
                 self.isLoading = false
@@ -79,6 +112,15 @@ final class PlayerManager: ObservableObject {
             let list = (try? await InnerTubeClient.shared.related(videoID: item.id)) ?? []
             guard let self, self.current?.id == item.id else { return }
             self.related = list
+            self.prefetchNext()
+        }
+    }
+
+    func retry() {
+        guard let item = current else { return }
+        Task {
+            await StreamResolver.shared.invalidate(item.id)
+            play(item, audio: audioOnly, expand: false)
         }
     }
 
@@ -88,7 +130,7 @@ final class PlayerManager: ObservableObject {
 
     func resume() {
         guard player.currentItem != nil else {
-            if let current { play(current, expand: false) }
+            if let current { play(current, audio: audioOnly, expand: false) }
             return
         }
         activateAudioSession()
@@ -100,7 +142,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func seek(to seconds: Double) {
-        let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
+        let target = max(0, duration > 0 ? min(seconds, duration - 0.5) : seconds)
         currentTime = target
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600)) { [weak self] _ in
             Task { @MainActor in self?.updateNowPlaying() }
@@ -108,12 +150,22 @@ final class PlayerManager: ObservableObject {
     }
 
     func skip(by delta: Double) {
-        seek(to: player.currentTime().seconds + delta)
+        let now = player.currentTime().seconds
+        seek(to: (now.isFinite ? now : currentTime) + delta)
     }
 
     func playNext() {
-        guard let next = related.first else { return }
+        guard let next = upNext.first else { return }
         play(next, expand: false)
+    }
+
+    func playPrevious() {
+        if currentTime > 5 { seek(to: 0); return }
+        guard let current, let index = queue.firstIndex(where: { $0.id == current.id }), index > 0 else {
+            seek(to: 0)
+            return
+        }
+        play(queue[index - 1], expand: false)
     }
 
     func stop() {
@@ -122,25 +174,31 @@ final class PlayerManager: ObservableObject {
         player.replaceCurrentItem(with: nil)
         current = nil
         related = []
+        queue = []
         isExpanded = false
         errorMessage = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
+    func setFullscreen(_ on: Bool) {
+        guard on != isFullscreen else { return }
+        isFullscreen = on
+        OrientationController.set(landscape: on)
+    }
+
+    /// 재생 중에 영상 ↔ 오디오 전용 스트림 전환 (같은 위치에서 이어서)
     func setAudioOnly(_ value: Bool) {
         guard value != audioOnly else { return }
         audioOnly = value
-        UserDefaults.standard.set(value, forKey: "audioOnly")
         guard let item = current else { return }
 
-        // 같은 위치에서 다른 스트림(영상 ↔ 오디오)으로 갈아탄다.
         let position = player.currentTime().seconds
         let wasPlaying = isPlaying || player.currentItem == nil
         loadTask?.cancel()
         isLoading = true
         loadTask = Task { [weak self] in
             do {
-                let url = try await Self.resolveStreamURL(id: item.id, audioOnly: value)
+                let url = try await StreamResolver.shared.resolve(id: item.id, audioOnly: value)
                 guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
                 self.startPlayback(url: url, seekTo: position.isFinite ? position : 0, autoPlay: wasPlaying)
             } catch {
@@ -157,36 +215,18 @@ final class PlayerManager: ObservableObject {
         layer.player = isInBackground ? nil : player
     }
 
-    // MARK: - Stream resolving
-
-    nonisolated private static func resolveStreamURL(id: String, audioOnly: Bool) async throws -> URL {
-        let video = YouTube(videoID: id, methods: [.local, .remote])
-        let streams = try await video.streams
-
-        let audio = streams
-            .filterAudioOnly()
-            .filter { $0.fileExtension == .m4a }
-            .highestAudioBitrateStream()
-
-        if audioOnly, let audio { return audio.url }
-
-        if let muxed = streams
-            .filterVideoAndAudio()
-            .filter({ $0.isNativelyPlayable })
-            .highestResolutionStream() {
-            return muxed.url
-        }
-
-        if let audio { return audio.url }
-        throw AppError.noPlayableStream
-    }
-
     // MARK: - Playback internals
+
+    private func prefetchNext() {
+        let ids = upNext.prefix(2).map(\.id)
+        guard !ids.isEmpty else { return }
+        Task { await StreamResolver.shared.prefetch(ids) }
+    }
 
     private func startPlayback(url: URL, seekTo position: Double, autoPlay: Bool = true) {
         activateAudioSession()
         let item = AVPlayerItem(url: url)
-        item.preferredForwardBufferDuration = 30
+        let itemID = current?.id
 
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] observed, _ in
             let status = observed.status
@@ -202,6 +242,7 @@ final class PlayerManager: ObservableObject {
                 case .failed:
                     self.isLoading = false
                     self.errorMessage = message ?? "재생에 실패했습니다."
+                    if let itemID { await StreamResolver.shared.invalidate(itemID) }
                 default:
                     break
                 }
@@ -224,7 +265,7 @@ final class PlayerManager: ObservableObject {
     }
 
     private func handleEnded() {
-        if autoplay, let next = related.first {
+        if (autoplay || isQueueMode), let next = upNext.first {
             play(next, expand: false)
         } else {
             isPlaying = false
@@ -294,7 +335,7 @@ final class PlayerManager: ObservableObject {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
     }
 
-    private func activateAudioSession() {
+    func activateAudioSession() {
         try? AVAudioSession.sharedInstance().setActive(true)
     }
 
@@ -316,14 +357,8 @@ final class PlayerManager: ObservableObject {
             MainActor.assumeIsolated { self?.playNext() }
             return .success
         }
-        center.skipForwardCommand.preferredIntervals = [10]
-        center.skipForwardCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { self?.skip(by: 10) }
-            return .success
-        }
-        center.skipBackwardCommand.preferredIntervals = [10]
-        center.skipBackwardCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { self?.skip(by: -10) }
+        center.previousTrackCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { self?.playPrevious() }
             return .success
         }
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
@@ -339,10 +374,11 @@ final class PlayerManager: ObservableObject {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }
+        let elapsed = player.currentTime().seconds
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: item.title,
             MPMediaItemPropertyArtist: item.channel,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: max(0, player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0),
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed.isFinite ? max(0, elapsed) : 0,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
         ]
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
@@ -365,5 +401,34 @@ final class PlayerManager: ObservableObject {
     /// MPMediaItemArtwork의 클로저는 백그라운드 스레드에서 호출되므로 MainActor 밖에서 만든다.
     nonisolated private static func makeArtwork(_ image: UIImage) -> MPMediaItemArtwork {
         MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+    }
+}
+
+// MARK: - 화면 회전 (전체화면)
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    static var orientationLock: UIInterfaceOrientationMask = .portrait
+
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        AppDelegate.orientationLock
+    }
+}
+
+@MainActor
+enum OrientationController {
+    static func set(landscape: Bool) {
+        AppDelegate.orientationLock = landscape ? .landscape : .portrait
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                var controller = window.rootViewController
+                while let vc = controller {
+                    vc.setNeedsUpdateOfSupportedInterfaceOrientations()
+                    controller = vc.presentedViewController
+                }
+            }
+            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait)) { _ in }
+        }
     }
 }

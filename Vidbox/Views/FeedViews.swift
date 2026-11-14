@@ -9,6 +9,8 @@ final class FeedViewModel: ObservableObject {
     private var query = ""
     private var requestID = 0
 
+    var hasLoaded: Bool { !items.isEmpty }
+
     func load(_ query: String) async {
         self.query = query
         requestID += 1
@@ -49,12 +51,14 @@ final class FeedViewModel: ObservableObject {
 
 struct FeedList: View {
     @ObservedObject var model: FeedViewModel
+    var limit: Int? = nil
 
     var body: some View {
         LazyVStack(spacing: 0) {
-            ForEach(model.items) { item in
+            let shown = limit.map { Array(model.items.prefix($0)) } ?? model.items
+            ForEach(shown) { item in
                 VideoCard(item: item)
-                    .task { await model.loadMoreIfNeeded(current: item) }
+                    .task { if limit == nil { await model.loadMoreIfNeeded(current: item) } }
             }
             if model.isLoading {
                 ProgressView().padding(24)
@@ -106,7 +110,7 @@ struct HomeView: View {
                 ToolbarItem(placement: .topBarLeading) { AppLogo() }
             }
             .navigationBarTitleDisplayMode(.inline)
-            .task { if model.items.isEmpty { await model.load(chips[selected].query) } }
+            .task { if !model.hasLoaded { await model.load(chips[selected].query) } }
         }
     }
 
@@ -114,98 +118,16 @@ struct HomeView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(chips.indices, id: \.self) { index in
-                    let isOn = index == selected
-                    Button {
+                    ChipButton(title: chips[index].title, isOn: index == selected) {
                         guard index != selected else { return }
                         selected = index
                         Task { await model.load(chips[index].query) }
-                    } label: {
-                        Text(chips[index].title)
-                            .font(.subheadline.weight(.medium))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .foregroundStyle(isOn ? Color(.systemBackground) : .primary)
-                            .background(isOn ? Color.primary : Color(.secondarySystemBackground),
-                                        in: RoundedRectangle(cornerRadius: 8))
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
-    }
-}
-
-// MARK: - 검색
-
-struct SearchView: View {
-    @StateObject private var model = FeedViewModel()
-    @State private var text = ""
-    @State private var suggestions: [String] = []
-    @State private var submitted = ""
-    @AppStorage("recentSearches") private var recentRaw = ""
-
-    private var recent: [String] {
-        recentRaw.split(separator: "\n").map(String.init)
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                if submitted.isEmpty {
-                    recentList
-                } else {
-                    FeedList(model: model)
-                }
-            }
-            .navigationTitle("검색")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: "검색")
-            .searchSuggestions {
-                ForEach(suggestions, id: \.self) { s in
-                    Label(s, systemImage: "magnifyingglass").searchCompletion(s)
-                }
-            }
-            .onSubmit(of: .search) { submit(text) }
-            .task(id: text) {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                guard !Task.isCancelled else { return }
-                suggestions = await InnerTubeClient.shared.suggestions(for: text)
-            }
-            .onChange(of: text) { _, newValue in
-                if newValue.isEmpty { submitted = "" }
-            }
-        }
-    }
-
-    private var recentList: some View {
-        LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(recent, id: \.self) { q in
-                Button {
-                    text = q
-                    submit(q)
-                } label: {
-                    HStack(spacing: 16) {
-                        Image(systemName: "clock.arrow.circlepath")
-                        Text(q).foregroundStyle(.primary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func submit(_ query: String) {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return }
-        submitted = q
-        recentRaw = ([q] + recent.filter { $0 != q }).prefix(20).joined(separator: "\n")
-        Task { await model.load(q) }
     }
 }
 
@@ -218,15 +140,41 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Toggle(isOn: Binding(get: { player.audioOnly }, set: { player.setAudioOnly($0) })) {
-                        Label("오디오 전용 모드 (데이터 절약)", systemImage: "headphones")
+                if !library.history.isEmpty {
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(alignment: .top, spacing: 12) {
+                                ForEach(library.history.prefix(20)) { item in
+                                    Button { player.play(item) } label: {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            ThumbnailView(url: item.bestThumbnail, duration: item.duration, cornerRadius: 10)
+                                                .frame(width: 150)
+                                            Text(item.title)
+                                                .font(.caption.weight(.medium))
+                                                .lineLimit(2)
+                                                .frame(width: 150, alignment: .leading)
+                                            Text(item.channel)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                        }
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                    } header: {
+                        HStack {
+                            Text("최근 본 동영상").font(.headline).foregroundStyle(.primary)
+                            Spacer()
+                            Button("모두 지우기") { library.clearHistory() }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    Toggle(isOn: $player.autoplay) {
-                        Label("다음 동영상 자동재생", systemImage: "infinity")
-                    }
-                } header: {
-                    Text("재생 설정")
                 }
 
                 Section {
@@ -238,27 +186,20 @@ struct LibraryView: View {
                     }
                     .onDelete { library.removeSaved(at: $0) }
                 } header: {
-                    Text("나중에 볼 동영상")
+                    Text("나중에 볼 동영상").font(.headline).foregroundStyle(.primary)
                 }
 
                 Section {
-                    if library.history.isEmpty {
-                        Text("시청 기록이 없습니다").foregroundStyle(.secondary)
+                    Toggle(isOn: $player.audioOnlyPreference) {
+                        Label("기본으로 오디오 전용 재생", systemImage: "headphones")
                     }
-                    ForEach(library.history) { item in
-                        VideoRow(item: item)
+                    Toggle(isOn: $player.autoplay) {
+                        Label("다음 동영상 자동재생", systemImage: "infinity")
                     }
-                    .onDelete { library.removeHistory(at: $0) }
                 } header: {
-                    HStack {
-                        Text("시청 기록")
-                        Spacer()
-                        if !library.history.isEmpty {
-                            Button("모두 지우기") { library.clearHistory() }
-                                .font(.caption)
-                        }
-                    }
+                    Text("재생 설정").font(.headline).foregroundStyle(.primary)
                 }
+                .tint(.green)
             }
             .listStyle(.plain)
             .navigationTitle("보관함")
