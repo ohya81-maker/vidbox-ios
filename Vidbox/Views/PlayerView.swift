@@ -144,6 +144,7 @@ struct PlayerStage: View {
     @State private var seekAmount = 0
     @State private var seekForward = true
     @State private var seekTask: Task<Void, Never>?
+    @State private var showDiagnostics = false
 
     var body: some View {
         ZStack {
@@ -177,7 +178,26 @@ struct PlayerStage: View {
             } else if showControls {
                 controls.transition(.opacity)
             }
+
+            // 길게 누르면 진단 정보 (재생 문제를 알려줄 때 캡처용)
+            if showDiagnostics {
+                VStack {
+                    HStack {
+                        Text(player.diagnostics + "\n(t=\(String(format: "%.1f", player.currentTime)))")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(8)
+                            .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(.top, 52)
+                .padding(.horizontal, 10)
+                .allowsHitTesting(false)
+            }
         }
+        .onLongPressGesture(minimumDuration: 0.8) { showDiagnostics.toggle() }
         .stageFrame(fullscreen)
         .environment(\.colorScheme, .dark)
         .onAppear { scheduleHide() }

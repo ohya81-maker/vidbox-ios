@@ -44,7 +44,14 @@ final class PlayerManager: ObservableObject {
     private var artwork: MPMediaItemArtwork?
     private var isInBackground = false
     private let layers = NSHashTable<AVPlayerLayer>.weakObjects()
-    private var slowRetriedID: String?
+    // 재생 후보와 자동 전환(감시 장치)
+    private var candidates: [PlaybackSource] = []
+    private var candidateIndex = 0
+    private var usedSlowPath = false
+    private var watchdog: Task<Void, Never>?
+    private var userPaused = false
+    /// 지금 재생 중인 방식 (진단용)
+    @Published private(set) var sourceKind = ""
 
     enum RepeatMode { case off, all, one }
 
@@ -131,20 +138,9 @@ final class PlayerManager: ObservableObject {
         updateNowPlaying()
         loadArtwork(for: item)
 
-        let wantAudio = audioOnly
-        loadTask = Task { [weak self] in
-            do {
-                let playerItem = try await Self.loadItem(id: item.id, audioOnly: wantAudio)
-                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
-                self.startPlayback(playerItem, seekTo: 0)
-                AccountStore.shared.markWatched(item.id)
-                self.prefetchNext()
-            } catch {
-                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
-                self.isLoading = false
-                self.errorMessage = "재생할 수 없는 영상입니다.\n\(error.localizedDescription)"
-            }
-        }
+        userPaused = false
+        beginLoading(item: item, audio: audioOnly, position: 0, autoPlay: true)
+        AccountStore.shared.markWatched(item.id)
 
         Task { [weak self] in
             let list = (try? await InnerTubeClient.shared.related(videoID: item.id)) ?? []
@@ -167,6 +163,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func resume() {
+        userPaused = false
         guard player.currentItem != nil else {
             if let current { play(current, audio: audioOnly, expand: false) }
             return
@@ -176,6 +173,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func pause() {
+        userPaused = true
         player.pause()
     }
 
@@ -214,6 +212,7 @@ final class PlayerManager: ObservableObject {
 
     func stop() {
         loadTask?.cancel()
+        watchdog?.cancel()
         player.pause()
         player.replaceCurrentItem(with: nil)
         current = nil
@@ -239,19 +238,7 @@ final class PlayerManager: ObservableObject {
 
         let position = player.currentTime().seconds
         let wasPlaying = isPlaying || player.currentItem == nil
-        loadTask?.cancel()
-        isLoading = true
-        loadTask = Task { [weak self] in
-            do {
-                let playerItem = try await Self.loadItem(id: item.id, audioOnly: value)
-                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
-                self.startPlayback(playerItem, seekTo: position.isFinite ? position : 0, autoPlay: wasPlaying)
-            } catch {
-                guard !Task.isCancelled, let self else { return }
-                self.isLoading = false
-                self.errorMessage = error.localizedDescription
-            }
-        }
+        beginLoading(item: item, audio: value, position: position.isFinite ? position : 0, autoPlay: wasPlaying)
     }
 
     /// 영상 화면(AVPlayerLayer)을 등록한다. 백그라운드에서는 자동으로 분리된다.
@@ -268,41 +255,114 @@ final class PlayerManager: ObservableObject {
         Task { await StreamResolver.shared.prefetch(ids) }
     }
 
-    /// 빠른 소스로 AVPlayerItem을 만들고, 실패하면 느린 경로(YouTubeKit)로 한 번 더 시도
+    /// 쇼츠 등 감시 장치 없이 쓰는 곳: 첫 번째로 만들어지는 후보
     nonisolated static func loadItem(id: String, audioOnly: Bool) async throws -> AVPlayerItem {
-        let source = try await StreamResolver.shared.resolve(id: id, audioOnly: audioOnly)
-        do {
-            return try await StreamResolver.makeItem(source)
-        } catch {
-            let slow = try await StreamResolver.shared.resolveSlow(id: id, audioOnly: audioOnly)
-            return try await StreamResolver.makeItem(slow)
+        for source in try await StreamResolver.shared.candidates(id: id, audioOnly: audioOnly) {
+            if let item = try? await StreamResolver.makeItem(source) { return item }
+        }
+        throw AppError.noPlayableStream
+    }
+
+    // MARK: 후보를 차례로 시도 + 재생이 안 되면 자동 전환
+
+    private func beginLoading(item: VideoItem, audio: Bool, position: Double, autoPlay: Bool) {
+        loadTask?.cancel()
+        watchdog?.cancel()
+        candidates = []
+        candidateIndex = 0
+        usedSlowPath = false
+        isLoading = true
+        errorMessage = nil
+        loadTask = Task { [weak self] in
+            do {
+                let list = try await StreamResolver.shared.candidates(id: item.id, audioOnly: audio)
+                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
+                self.candidates = list
+                await self.tryCandidates(item: item, position: position, autoPlay: autoPlay)
+                self.prefetchNext()
+            } catch {
+                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
+                await self.tryCandidates(item: item, position: position, autoPlay: autoPlay)
+            }
         }
     }
 
-    /// 재생 도중 소스가 실패하면 느린 경로로 한 번 자동 재시도
-    private func recoverWithSlowPath() {
-        guard let item = current, slowRetriedID != item.id else {
-            isLoading = false
-            return
+    private func tryCandidates(item: VideoItem, position: Double, autoPlay: Bool) async {
+        while candidateIndex < candidates.count {
+            let source = candidates[candidateIndex]
+            if let playerItem = try? await StreamResolver.makeItem(source) {
+                guard !Task.isCancelled, current?.id == item.id else { return }
+                sourceKind = source.kind
+                startPlayback(playerItem, seekTo: position, autoPlay: autoPlay)
+                armWatchdog(item: item, position: position, autoPlay: autoPlay)
+                return
+            }
+            candidateIndex += 1
         }
-        slowRetriedID = item.id
-        let position = currentTime
-        let wantAudio = audioOnly
-        isLoading = true
-        errorMessage = nil
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in
-            do {
-                let source = try await StreamResolver.shared.resolveSlow(id: item.id, audioOnly: wantAudio)
-                let playerItem = try await StreamResolver.makeItem(source)
-                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
-                self.startPlayback(playerItem, seekTo: position)
-            } catch {
-                guard !Task.isCancelled, let self, self.current?.id == item.id else { return }
-                self.isLoading = false
-                self.errorMessage = "재생할 수 없는 영상입니다.\n\(error.localizedDescription)"
+        // 빠른 후보가 모두 실패 → YouTubeKit(느림)
+        if !usedSlowPath {
+            usedSlowPath = true
+            if let slow = try? await StreamResolver.shared.slowCandidates(id: item.id, audioOnly: audioOnly),
+               !Task.isCancelled, current?.id == item.id {
+                candidates = slow
+                candidateIndex = 0
+                await tryCandidates(item: item, position: position, autoPlay: autoPlay)
+                return
             }
         }
+        guard current?.id == item.id else { return }
+        isLoading = false
+        errorMessage = "재생할 수 없는 영상입니다."
+    }
+
+    /// 재생 시작 5초 뒤에도 시간이 흐르지 않으면 다음 후보로 전환
+    private func armWatchdog(item: VideoItem, position: Double, autoPlay: Bool) {
+        watchdog?.cancel()
+        guard autoPlay else { return }
+        watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self, self.current?.id == item.id, !self.userPaused else { return }
+            let now = self.player.currentTime().seconds
+            let kind = self.sourceKind
+            if now.isFinite, now > position + 0.5 {
+                StreamResolver.markWorking(kind)
+                return
+            }
+            // 데이터는 받아졌는데 시간이 멈춰 있으면 이 기기에서 안 되는 방식으로 기억
+            let buffered = self.player.currentItem?.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? 0
+            if buffered > 3 { StreamResolver.markBroken(kind) }
+            self.failover(item: item)
+        }
+    }
+
+    private func failover(item: VideoItem) {
+        guard current?.id == item.id else { return }
+        watchdog?.cancel()
+        let position = max(0, currentTime)
+        candidateIndex += 1
+        isLoading = true
+        errorMessage = nil
+        player.pause()
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            await self?.tryCandidates(item: item, position: position, autoPlay: true)
+        }
+    }
+
+    /// 플레이어 화면을 길게 누르면 보이는 진단 정보
+    var diagnostics: String {
+        let item = player.currentItem
+        let buffered = item?.loadedTimeRanges.first.map { String(format: "%.1f", $0.timeRangeValue.duration.seconds) } ?? "0"
+        let wait = player.reasonForWaitingToPlay?.rawValue ?? "-"
+        let log = item?.errorLog()?.events.last.map { "\($0.errorStatusCode) \($0.errorComment ?? "")" } ?? "-"
+        let status: String
+        switch player.timeControlStatus {
+        case .paused: status = "일시정지"
+        case .waitingToPlayAtSpecifiedRate: status = "대기중"
+        case .playing: status = "재생중"
+        @unknown default: status = "?"
+        }
+        return "방식: \(sourceKind) (\(candidateIndex + 1)/\(max(candidates.count, 1)))\n상태: \(status) / \(wait)\n버퍼: \(buffered)s · 시간: \(String(format: "%.1f", currentTime))s\n오류: \(log)"
     }
 
     private func startPlayback(_ item: AVPlayerItem, seekTo position: Double, autoPlay: Bool = true) {
@@ -320,12 +380,9 @@ final class PlayerManager: ObservableObject {
                     self.duration = seconds.isFinite ? seconds : 0
                     self.updateNowPlaying()
                 case .failed:
-                    if self.slowRetriedID == self.current?.id {
-                        self.isLoading = false
-                        self.errorMessage = message ?? "재생에 실패했습니다."
-                    } else {
-                        self.recoverWithSlowPath()
-                    }
+                    // 이 방식이 실패하면 다음 후보로 자동 전환
+                    _ = message
+                    if let item = self.current { self.failover(item: item) }
                 default:
                     break
                 }
