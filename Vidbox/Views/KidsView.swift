@@ -81,7 +81,7 @@ struct KidsView: View {
             }
             .font(.system(size: 30, weight: .black, design: .rounded))
             .rotationEffect(.degrees(-3))
-            Text("KTUBE")
+            Text("K-TUBE")
                 .font(.system(size: 14, weight: .heavy, design: .rounded))
                 .foregroundStyle(.secondary)
             Spacer()

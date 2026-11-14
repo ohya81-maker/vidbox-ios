@@ -83,7 +83,7 @@ today = datetime.date.today().isoformat()
 notes = args.notes or f"KTUBE {version}"
 
 source = {
-    "name": "KTUBE",
+    "name": "K-TUBE",
     "identifier": "me.synology.mistylake.ktube",
     "subtitle": "개인용 KTUBE 앱 배포",
     "sourceURL": f"{base}/apps.json",
@@ -92,9 +92,9 @@ source = {
     "tintColor": "#E0262B",
     "apps": [
         {
-            "name": "KTUBE",
+            "name": "K-TUBE",
             "bundleIdentifier": bundle_id,
-            "developerName": "KTUBE",
+            "developerName": "K-TUBE",
             "subtitle": "광고 없는 동영상·음악 플레이어",
             "localizedDescription": "홈·쇼츠·음악·KIDS, 백그라운드 재생, 잠금화면 컨트롤을 지원하는 개인용 동영상 앱.",
             "iconURL": f"{base}/icon.png",
@@ -132,7 +132,7 @@ manifest = {
             "bundle-identifier": bundle_id,
             "bundle-version": version,
             "kind": "software",
-            "title": "KTUBE",
+            "title": "K-TUBE",
         },
     }]
 }

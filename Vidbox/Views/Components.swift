@@ -253,7 +253,7 @@ struct AppLogo: View {
                                    startPoint: .topLeading, endPoint: .bottomTrailing),
                     in: RoundedRectangle(cornerRadius: 5, style: .continuous)
                 )
-            Text("KTUBE")
+            Text("K-TUBE")
                 .font(.system(size: 20, weight: .heavy))
                 .tracking(-0.8)
             if let suffix {

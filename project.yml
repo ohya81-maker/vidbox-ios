@@ -24,8 +24,8 @@ targets:
         PRODUCT_NAME: Vidbox
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
-        MARKETING_VERSION: "1.7.0"
-        CURRENT_PROJECT_VERSION: "16"
+        MARKETING_VERSION: "1.7.1"
+        CURRENT_PROJECT_VERSION: "17"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGNING_ALLOWED: "NO"
         CODE_SIGNING_REQUIRED: "NO"
@@ -33,7 +33,7 @@ targets:
     info:
       path: Vidbox/Info.plist
       properties:
-        CFBundleDisplayName: KTUBE
+        CFBundleDisplayName: K-TUBE
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UIBackgroundModes:
