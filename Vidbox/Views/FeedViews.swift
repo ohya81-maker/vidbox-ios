@@ -174,6 +174,11 @@ struct HomeView: View {
             }
             // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
             .refreshable { await Task { await loadSelected() }.value }  // 당길 때마다 새로 섞인 홈
+            // 다른 태그를 보고 있을 때 왼쪽 가장자리 스와이프 → 「전체」
+            .edgeSwipeBack(selected != 0) {
+                selected = 0
+                Task { await loadSelected() }
+            }
             .hidesTabBarOnScroll()
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }

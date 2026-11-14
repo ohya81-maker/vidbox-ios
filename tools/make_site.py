@@ -1,7 +1,7 @@
 """시놀로지(또는 아무 HTTPS 웹서버)에 올릴 KTUBE 설치 사이트를 만든다.
 
 사용법:
-    python tools/make_site.py [IPA 경로] [--base https://mistylake.synology.me/ktube] [--notes "변경 내용"]
+    python tools/make_site.py [IPA 경로] [--apk KTUBE.apk] [--base https://mistylake.synology.me:8443] [--notes "변경 내용"]
 
 결과: dist/youtube/ 폴더
     docker-compose.yml, nginx.conf   ← 시놀로지 Container Manager 용 (nginx로 사이트 제공)
@@ -22,18 +22,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument("ipa", nargs="?", default=os.path.join(ROOT, "KTUBE.ipa"))
 parser.add_argument("--base", default="https://mistylake.synology.me:8443")
 parser.add_argument("--notes", default="")
+parser.add_argument("--apk", default="", help="안드로이드 APK 경로 (있으면 사이트에 함께 올림)")
 parser.add_argument("--out", default=os.path.join(ROOT, "dist", "youtube", "site"))
 args = parser.parse_args()
 
 # 사이트 폴더 옆에 시놀로지 Docker 설정 파일을 함께 둔다
 bundle_dir = os.path.dirname(os.path.abspath(args.out))
 os.makedirs(bundle_dir, exist_ok=True)
-for name in ("docker-compose.yml", "nginx.conf"):
+for name in ("docker-compose.yml", "nginx.conf", "compose-snippet.yaml"):
     shutil.copyfile(os.path.join(ROOT, "deploy", "synology", name), os.path.join(bundle_dir, name))
 # 이전 버전 IPA는 지운다 (사이트에는 최신 하나만)
 if os.path.isdir(args.out):
     for old in os.listdir(args.out):
-        if old.endswith(".ipa"):
+        if old.endswith(".ipa") or (args.apk and old.endswith(".apk")):
             os.remove(os.path.join(args.out, old))
 
 project = open(os.path.join(ROOT, "project.yml"), encoding="utf-8").read()
@@ -139,7 +140,7 @@ with open(os.path.join(args.out, "manifest.plist"), "wb") as f:
     plistlib.dump(manifest, f)
 itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.plist", safe="")
 if signed:
-    direct = (f'<a class="btn primary" href="{itms}">이 아이폰에 바로 설치</a>'
+    direct = (f'<a class="btn primary" href="{itms}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이 아이폰에 바로 설치</a>'
               f'<p class="hint">서명된 IPA입니다 (번들 ID <code>{bundle_id}</code>'
               + (f', {expires:%Y-%m-%d %H:%M}까지 유효' if expires else '')
               + '). 설치 후 설정 → 일반 → VPN 및 기기 관리에서 신뢰를 눌러주세요. '
@@ -148,8 +149,23 @@ else:
     direct = ('<p class="hint">지금 올린 IPA는 서명되지 않아 바로 설치할 수 없습니다. '
               '서명된 IPA로 이 페이지를 다시 만들면 여기에 「바로 설치」 버튼이 생깁니다.</p>')
 
+# 안드로이드 APK (있으면)
+apk_block = ('<p class="hint" style="margin:0">안드로이드 앱은 준비 중이에요. 완성되면 이 자리에 설치 버튼이 생깁니다.</p>')
+if args.apk and os.path.exists(args.apk):
+    apk_name = "KTUBE.apk"
+    shutil.copyfile(args.apk, os.path.join(args.out, apk_name))
+    apk_mb = os.path.getsize(args.apk) / 1024 / 1024
+    apk_block = (
+        f'<a class="btn primary" href="{apk_name}" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>KTUBE.apk 내려받기 ({apk_mb:.1f}MB)</a>'
+        '<ol class="steps">'
+        '<li>내려받기가 끝나면 알림이나 「다운로드」에서 <b>KTUBE.apk</b>를 엽니다.</li>'
+        '<li>「출처를 알 수 없는 앱」 경고가 나오면 <b>설정 → 이 출처 허용</b>을 켜고 돌아와 <b>설치</b>를 누릅니다.</li>'
+        '<li>업데이트할 때도 같은 방법으로 덮어 설치하면 됩니다 (데이터 유지).</li>'
+        '</ol>')
+    print(f"APK 포함: {apk_name} ({apk_mb:.1f}MB)")
+
 page = open(os.path.join(ROOT, "site", "index.html"), encoding="utf-8").read()
-page = page.replace("{{DIRECT_INSTALL}}", direct)
+page = page.replace("{{DIRECT_INSTALL}}", direct).replace("{{APK_INSTALL}}", apk_block)
 source_url = f"{base}/apps.json"
 for key, value in {
     "{{VERSION}}": version,
@@ -159,6 +175,7 @@ for key, value in {
     "{{SOURCE_URL}}": source_url,
     "{{SOURCE_URL_ENC}}": urllib.parse.quote(source_url, safe=""),
     "{{IPA_NAME}}": ipa_name,
+    "{{BASE_URL}}": base,
     "{{NOTES}}": notes.replace("<", "&lt;"),
 }.items():
     page = page.replace(key, value)

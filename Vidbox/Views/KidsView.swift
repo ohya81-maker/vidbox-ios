@@ -46,6 +46,16 @@ struct KidsView: View {
             }
             .hidesTabBarOnScroll()
             .scrollDismissesKeyboard(.immediately)
+            // 검색 중이거나 다른 카테고리 → 왼쪽 가장자리 스와이프로 「추천」
+            .edgeSwipeBack(searching || selected != "rec") {
+                if searching {
+                    searching = false
+                    query = ""
+                    Task { await load() }
+                } else {
+                    selected = "rec"
+                }
+            }
             .background(
                 LinearGradient(colors: [current.color.opacity(0.18), Color(.systemBackground)],
                                startPoint: .top, endPoint: .center)

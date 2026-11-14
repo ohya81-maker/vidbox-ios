@@ -1,0 +1,11 @@
+# /docker/compose.yaml (여러 컨테이너를 한 파일로 관리하는 경우) 의 services: 아래에 이 블록을 추가하세요.
+# 경로는 /docker 기준입니다: /docker/youtube/site, /docker/youtube/nginx.conf
+  ktube-site:
+    image: nginx:1.27-alpine
+    container_name: ktube-site
+    restart: unless-stopped
+    ports:
+      - "8090:80"          # DSM 리버스 프록시: https://mistylake.synology.me:8443 → http://localhost:8090
+    volumes:
+      - ./youtube/site:/usr/share/nginx/html:ro
+      - ./youtube/nginx.conf:/etc/nginx/conf.d/default.conf:ro

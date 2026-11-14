@@ -215,6 +215,21 @@ struct FolderDetailView: View {
         }
     }
 
+    /// 지금 이 폴더를 재생목록으로 재생 중인지
+    private var playingThisFolder: Bool {
+        guard let current = player.current, player.isQueueMode else { return false }
+        return items.contains { $0.id == current.id } && Set(player.queue.map(\.id)) == Set(items.map(\.id))
+    }
+
+    private var repeatTitle: String {
+        guard playingThisFolder else { return "반복 재생" }
+        switch player.repeatMode {
+        case .off: return "반복 끔"
+        case .all: return "전체 반복"
+        case .one: return "한 곡 반복"
+        }
+    }
+
     private var isMusicFolder: Bool {
         if case .playlist(let id) = ref { return library.playlist(id)?.isMusic == true }
         return false
@@ -235,18 +250,34 @@ struct FolderDetailView: View {
                         .aspectRatio(16 / 9, contentMode: .fit)
                     Text(name).font(.title2.weight(.bold))
                     Text("\(items.count)개").font(.subheadline).foregroundStyle(.secondary)
-                    HStack(spacing: 10) {
-                        actionButton("재생", icon: "play.fill", filled: true) {
-                            // 음악 폴더는 오디오로, 일반 폴더는 영상으로
-                            if let first = items.first { player.play(first, queue: items, audio: isMusicFolder) }
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            actionButton("재생", icon: "play.fill", filled: true) {
+                                // 음악 폴더는 오디오로, 일반 폴더는 영상으로
+                                if let first = items.first { player.play(first, queue: items, audio: isMusicFolder) }
+                            }
+                            actionButton("음악으로 듣기", icon: "headphones", filled: false) {
+                                if let first = items.first { player.play(first, queue: items, audio: true) }
+                            }
                         }
-                        actionButton("음악으로 듣기", icon: "headphones", filled: false) {
-                            if let first = items.first { player.play(first, queue: items, audio: true) }
-                        }
-                        actionButton("셔플", icon: "shuffle", filled: false) {
-                            if let first = items.randomElement() {
-                                player.play(first, queue: items, audio: true)
-                                if !player.shuffle { player.toggleShuffle() }
+                        HStack(spacing: 8) {
+                            actionButton("셔플", icon: "shuffle", filled: playingThisFolder && player.shuffle) {
+                                if playingThisFolder {
+                                    player.toggleShuffle()
+                                } else if let first = items.randomElement() {
+                                    player.play(first, queue: items, audio: true)
+                                    if !player.shuffle { player.toggleShuffle() }
+                                }
+                            }
+                            // 반복: 끔 → 전체 반복 → 한 곡 반복 (재생 중이 아니면 전체 반복으로 바로 재생)
+                            actionButton(repeatTitle, icon: player.repeatMode == .one ? "repeat.1" : "repeat",
+                                         filled: playingThisFolder && player.repeatMode != .off) {
+                                if playingThisFolder {
+                                    player.cycleRepeat()
+                                } else if let first = items.first {
+                                    player.play(first, queue: items, audio: isMusicFolder)
+                                    player.repeatMode = .all
+                                }
                             }
                         }
                     }

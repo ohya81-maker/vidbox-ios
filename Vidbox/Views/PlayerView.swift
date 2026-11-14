@@ -159,6 +159,12 @@ struct PlayerStage: View {
     @State private var seekTask: Task<Void, Never>?
     @State private var showDiagnostics = UserDefaults.standard.bool(forKey: "ktubeDiag")
 
+    /// 재생 화면 비율: 가로 영상은 16:9, 세로 영상(직캠 등)은 YouTube처럼 더 길게 — 최대 2:3 (세로가 가로의 1.5배)
+    private var stageAspect: CGFloat {
+        if player.audioOnly { return 16 / 9 }
+        return min(16 / 9, max(player.videoAspect, 2 / 3))
+    }
+
     var body: some View {
         ZStack {
             Color.black
@@ -211,7 +217,7 @@ struct PlayerStage: View {
             }
         }
         .onLongPressGesture(minimumDuration: 0.8) { showDiagnostics.toggle() }
-        .stageFrame(fullscreen)
+        .stageFrame(fullscreen, aspect: stageAspect)
         .environment(\.colorScheme, .dark)
         .onAppear { scheduleHide() }
     }
@@ -414,11 +420,12 @@ struct PlayerStage: View {
 
 private extension View {
     @ViewBuilder
-    func stageFrame(_ fullscreen: Bool) -> some View {
+    func stageFrame(_ fullscreen: Bool, aspect: CGFloat) -> some View {
         if fullscreen {
             self.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            self.aspectRatio(16 / 9, contentMode: .fit)
+            self.aspectRatio(aspect, contentMode: .fit)
+                .animation(.easeInOut(duration: 0.25), value: aspect)
         }
     }
 }

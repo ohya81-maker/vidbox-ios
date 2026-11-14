@@ -38,6 +38,11 @@ struct SearchView: View {
                 }
             }
             .scrollDismissesKeyboard(.immediately)
+            // 검색 결과/입력 중 → 왼쪽 가장자리 스와이프로 검색 첫 화면
+            .edgeSwipeBack(!query.isEmpty || typing) {
+                text = ""
+                query = ""
+            }
             .navigationTitle("검색")
             .navigationBarTitleDisplayMode(.inline)
             .task(id: text) {

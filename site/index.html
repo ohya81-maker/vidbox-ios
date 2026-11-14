@@ -3,86 +3,234 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b10">
 <title>KTUBE 설치</title>
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
 <style>
   :root {
-    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --sub: #6e6e73; --line: #e5e5ea;
-    --accent: #e0262b; --accent-text: #ffffff; --soft: #f2f2f7;
+    --bg: #f4f4f8;
+    --text: #15151a;
+    --sub: #61616b;
+    --glass: rgba(255, 255, 255, 0.55);
+    --glass-strong: rgba(255, 255, 255, 0.72);
+    --stroke: rgba(255, 255, 255, 0.7);
+    --hair: rgba(20, 20, 30, 0.08);
+    --accent: #e5262c;
+    --accent-2: #ff5a3c;
+    --chip: rgba(20, 20, 30, 0.06);
+    --shadow: 0 10px 30px rgba(30, 20, 60, 0.10);
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #000000; --card: #1c1c1e; --text: #f5f5f7; --sub: #98989d; --line: #2c2c2e; --soft: #2c2c2e; }
+    :root {
+      --bg: #0b0b10;
+      --text: #f4f4f7;
+      --sub: #a0a0ab;
+      --glass: rgba(30, 30, 38, 0.45);
+      --glass-strong: rgba(38, 38, 48, 0.6);
+      --stroke: rgba(255, 255, 255, 0.10);
+      --hair: rgba(255, 255, 255, 0.08);
+      --chip: rgba(255, 255, 255, 0.08);
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* 배경색은 html에만 — body에도 칠하면 뒤의 색 덩어리(.backdrop)를 가린다 */
+  html { background: var(--bg); }
+  body { margin: 0; color: var(--text); }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif;
-    padding: env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 32px);
+    min-height: 100vh;
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Segoe UI", sans-serif;
+    padding: calc(env(safe-area-inset-top) + 8px) 16px calc(env(safe-area-inset-bottom) + 40px);
+    overflow-x: hidden;
   }
-  main { max-width: 560px; margin: 0 auto; }
-  header { text-align: center; padding: 40px 0 24px; }
-  header img { width: 96px; height: 96px; border-radius: 22px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
-  h1 { font-size: 30px; margin: 14px 0 2px; letter-spacing: -0.5px; }
-  .ver { color: var(--sub); font-size: 14px; }
-  .card { background: var(--card); border-radius: 18px; padding: 20px; margin: 14px 0; border: 1px solid var(--line); }
-  .card h2 { font-size: 18px; margin: 0 0 10px; }
+
+  /* 뒤에 깔리는 흐린 색 덩어리 — 유리 카드 너머로 비친다 */
+  .backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+  .blob { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .55; }
+  .b1 { width: 420px; height: 420px; background: #ff3b3b; top: -120px; left: -140px; }
+  .b2 { width: 360px; height: 360px; background: #ff8a3c; top: 180px; right: -160px; opacity: .40; }
+  .b3 { width: 420px; height: 420px; background: #7b5cff; bottom: -160px; left: -80px; opacity: .35; }
+  @media (prefers-color-scheme: dark) { .blob { opacity: .32; } .b2 { opacity: .24; } .b3 { opacity: .28; } }
+
+  main { max-width: 520px; margin: 0 auto; }
+
+  .glass {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    backdrop-filter: blur(22px) saturate(160%);
+    border: 1px solid var(--stroke);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+  }
+
+  header { text-align: center; padding: 28px 20px 24px; margin: 12px 0 14px; }
+  header img { width: 84px; height: 84px; border-radius: 20px; display: block; margin: 0 auto; }
+  h1 { font-size: 30px; font-weight: 800; letter-spacing: -0.8px; margin: 14px 0 2px; }
+  .tagline { color: var(--sub); font-size: 14px; margin: 0; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 14px;
+    padding: 6px 12px; border-radius: 999px; background: var(--chip); color: var(--sub);
+    font-size: 13px; font-weight: 600;
+  }
+  .pill svg { width: 15px; height: 15px; }
+
+  section.card { padding: 20px; margin: 14px 0; }
+  .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .icon-tile {
+    width: 40px; height: 40px; border-radius: 12px; flex: none;
+    display: grid; place-items: center; background: var(--chip); color: var(--text);
+  }
+  .icon-tile svg { width: 22px; height: 22px; }
+  .card-head h2 { font-size: 18px; font-weight: 700; margin: 0; letter-spacing: -0.3px; }
+  .card-head p { margin: 0; color: var(--sub); font-size: 13px; }
+
   .btn {
-    display: block; width: 100%; text-align: center; text-decoration: none; font-weight: 700;
-    padding: 15px 16px; border-radius: 14px; margin: 10px 0 0; font-size: 17px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; text-decoration: none; font-weight: 700; font-size: 16px;
+    padding: 15px 16px; border-radius: 16px; margin-top: 10px; border: 0;
+    transition: transform .12s ease, opacity .12s ease;
   }
-  .primary { background: var(--accent); color: var(--accent-text); }
-  .secondary { background: var(--soft); color: var(--text); }
-  .hint { color: var(--sub); font-size: 13px; margin: 8px 0 0; }
-  ol { padding-left: 20px; margin: 6px 0 0; }
-  li { margin: 6px 0; }
-  code { background: var(--soft); padding: 2px 6px; border-radius: 6px; font-size: 13px; word-break: break-all; }
-  .notes { white-space: pre-line; color: var(--sub); font-size: 14px; }
-  a.inline { color: var(--accent); }
+  .btn:active { transform: scale(.98); opacity: .9; }
+  .btn svg { width: 20px; height: 20px; }
+  .primary { background: linear-gradient(135deg, var(--accent-2), var(--accent)); color: #fff; }
+  .secondary { background: var(--glass-strong); color: var(--text); border: 1px solid var(--hair); }
+
+  .hint { color: var(--sub); font-size: 13px; margin: 10px 0 0; }
+  .steps { list-style: none; padding: 0; margin: 12px 0 0; counter-reset: s; }
+  .steps li { position: relative; padding-left: 30px; margin: 8px 0; color: var(--sub); font-size: 14px; }
+  .steps li::before {
+    counter-increment: s; content: counter(s);
+    position: absolute; left: 0; top: 1px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--chip); color: var(--text); font-size: 12px; font-weight: 700;
+    display: grid; place-items: center;
+  }
+  code { background: var(--chip); padding: 2px 6px; border-radius: 6px; font-size: 12.5px; word-break: break-all; }
+  .notes { white-space: pre-line; color: var(--sub); font-size: 14px; margin: 0; }
+
+  #qr-wrap { display: grid; place-items: center; margin-top: 6px; }
+  #qr { padding: 14px; background: #fff; border-radius: 18px; }
+  #qr img, #qr canvas { display: block; }
+  .url { text-align: center; margin-top: 10px; }
+
+  .hidden { display: none; }
+  footer { text-align: center; color: var(--sub); font-size: 12px; margin-top: 22px; opacity: .8; }
 </style>
 </head>
 <body>
+<div class="backdrop" aria-hidden="true">
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+</div>
+
 <main>
-  <header>
-    <img src="icon.png" alt="KTUBE 아이콘">
+  <header class="glass">
+    <img src="icon.png" alt="">
     <h1>KTUBE</h1>
-    <div class="ver">버전 {{VERSION}} ({{BUILD}}) · {{DATE}} · {{SIZE}}</div>
+    <p class="tagline">광고 없는 동영상 · 음악 플레이어</p>
+    <div class="pill" id="device">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <span>기기 확인 중…</span>
+    </div>
   </header>
 
-  <section class="card">
-    <h2>⚡ 바로 설치 (plist)</h2>
+  <!-- 컴퓨터에서 열었을 때: 폰으로 찍을 QR -->
+  <section class="card glass hidden" id="desktop">
+    <div class="card-head">
+      <div class="icon-tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg>
+      </div>
+      <div>
+        <h2>휴대폰으로 찍어 설치하기</h2>
+        <p>아이폰·안드로이드 모두 이 QR 하나면 됩니다</p>
+      </div>
+    </div>
+    <div id="qr-wrap"><div id="qr"></div></div>
+    <p class="hint url"><code>{{BASE_URL}}/</code></p>
+  </section>
+
+  <!-- 아이폰 -->
+  <section class="card glass" id="ios">
+    <div class="card-head">
+      <div class="icon-tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M10.5 18.5h3"/></svg>
+      </div>
+      <div>
+        <h2>iPhone</h2>
+        <p>버전 {{VERSION}} ({{BUILD}}) · {{DATE}} · {{SIZE}}</p>
+      </div>
+    </div>
     {{DIRECT_INSTALL}}
+    <a class="btn secondary" href="sidestore://source?url={{SOURCE_URL_ENC}}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      SideStore에 추가
+    </a>
+    <a class="btn secondary" href="{{IPA_NAME}}" download>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+      IPA 내려받기
+    </a>
+    <p class="hint">SideStore 소스 주소: <code>{{SOURCE_URL}}</code></p>
   </section>
 
-  <section class="card">
-    <h2>📲 아이폰에서 설치 · 업데이트 (SideStore)</h2>
-    <p style="margin:0">SideStore(또는 AltStore)가 설치된 아이폰에서 아래 버튼을 누르면 KTUBE 소스가 추가됩니다. 소스에서 KTUBE를 설치하면 이후 새 버전이 자동으로 표시됩니다.</p>
-    <a class="btn primary" href="sidestore://source?url={{SOURCE_URL_ENC}}">SideStore에 KTUBE 추가</a>
-    <a class="btn secondary" href="altstore://source?url={{SOURCE_URL_ENC}}">AltStore에 KTUBE 추가</a>
-    <p class="hint">버튼이 동작하지 않으면 SideStore → 소스(Sources) → + 에 이 주소를 붙여넣으세요:<br><code>{{SOURCE_URL}}</code></p>
+  <!-- 안드로이드 -->
+  <section class="card glass" id="android">
+    <div class="card-head">
+      <div class="icon-tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2.5"/><path d="M5 6h14M5 17.5h14M11 20h2"/></svg>
+      </div>
+      <div>
+        <h2>Android</h2>
+        <p>APK 파일로 설치</p>
+      </div>
+    </div>
+    {{APK_INSTALL}}
   </section>
 
-  <section class="card">
-    <h2>💻 컴퓨터로 설치 (Sideloadly)</h2>
-    <a class="btn secondary" href="{{IPA_NAME}}" download>KTUBE.ipa 내려받기</a>
-    <p class="hint">Windows/Mac의 Sideloadly에 끌어다 놓고 Apple ID로 설치합니다. 무료 Apple ID는 7일마다 다시 설치해야 합니다.</p>
+  <section class="card glass">
+    <div class="card-head">
+      <div class="icon-tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+      </div>
+      <div><h2>이번 버전</h2><p>{{DATE}}</p></div>
+    </div>
+    <p class="notes">{{NOTES}}</p>
   </section>
 
-  <section class="card">
-    <h2>🛠 처음 한 번만: SideStore 준비</h2>
-    <ol>
-      <li>SideStore 공식 사이트 <a class="inline" href="https://sidestore.io">sidestore.io</a>의 안내대로 아이폰에 SideStore를 설치합니다. <b>이 단계에만 컴퓨터가 필요합니다.</b></li>
-      <li>아이폰 설정 → 개인정보 보호 및 보안 → <b>개발자 모드</b>를 켭니다.</li>
-      <li>이 페이지를 아이폰 Safari에서 열고 <b>「SideStore에 KTUBE 추가」</b>를 누른 뒤, 소스에서 KTUBE를 설치합니다.</li>
-      <li>이후 7일마다 SideStore가 아이폰 안에서 자동으로 다시 서명합니다(컴퓨터 불필요).</li>
-    </ol>
-    <p class="hint">위의 「바로 설치(plist)」는 이 아이폰을 허용하는 인증서로 서명된 IPA가 올라가 있을 때만 동작합니다.</p>
-  </section>
-
-  <section class="card">
-    <h2>📝 이번 버전</h2>
-    <div class="notes">{{NOTES}}</div>
-  </section>
+  <footer>KTUBE · 개인용 배포 페이지</footer>
 </main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+  // 기종에 맞는 설치 카드를 맨 위로, 컴퓨터면 QR을 보여준다
+  (function () {
+    var ua = navigator.userAgent || "";
+    var isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    var isAndroid = /Android/i.test(ua);
+    var label = document.querySelector("#device span");
+    var main = document.querySelector("main");
+    var header = document.querySelector("header");
+    function moveFirst(el) { main.insertBefore(el, header.nextSibling); }
+
+    if (isIOS) {
+      label.textContent = "이 기기: iPhone";
+      moveFirst(document.getElementById("ios"));
+    } else if (isAndroid) {
+      label.textContent = "이 기기: Android";
+      moveFirst(document.getElementById("android"));
+    } else {
+      label.textContent = "컴퓨터에서 열었어요";
+      var desktop = document.getElementById("desktop");
+      desktop.classList.remove("hidden");
+      moveFirst(desktop);
+      try {
+        new QRCode(document.getElementById("qr"), {
+          text: "{{BASE_URL}}/", width: 200, height: 200,
+          colorDark: "#15151a", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M
+        });
+      } catch (e) {
+        document.getElementById("qr").textContent = "QR을 만들 수 없습니다";
+      }
+    }
+  })();
+</script>
 </body>
 </html>

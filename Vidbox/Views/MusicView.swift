@@ -109,6 +109,17 @@ struct MusicView: View {
                 .padding(.bottom, 8)
             }
             .scrollDismissesKeyboard(.immediately)
+            // 검색 결과·선택한 태그 → 왼쪽 가장자리 스와이프로 「전체」
+            .edgeSwipeBack(!searchedQuery.isEmpty || selectedMood != nil) {
+                if !searchedQuery.isEmpty {
+                    searchText = ""
+                    searchedQuery = ""
+                    searchResults = []
+                } else {
+                    selectedMood = nil
+                    Task { await model.selectMood(nil) }
+                }
+            }
             .hidesTabBarOnScroll()
             // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
             .refreshable { await Task { await model.reload() }.value }
@@ -229,7 +240,11 @@ struct MusicView: View {
     private var moodBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                // 맨 앞: 음악에서 저장한 폴더
+                // 맨 앞: 전체(기본 화면) · 음악에서 저장한 폴더
+                ChipButton(title: "전체", isOn: selectedMood == nil) {
+                    selectedMood = nil
+                    Task { await model.selectMood(nil) }
+                }
                 ChipButton(title: Self.savedChip, isOn: selectedMood == Self.savedChip) {
                     selectedMood = selectedMood == Self.savedChip ? nil : Self.savedChip
                 }

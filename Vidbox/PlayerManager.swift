@@ -44,6 +44,9 @@ final class PlayerManager: ObservableObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var statusObservation: NSKeyValueObservation?
+    private var sizeObservation: NSKeyValueObservation?
+    /// 영상의 가로/세로 비율 (세로 직캠이면 1보다 작음). 재생 화면 높이를 정할 때 쓴다.
+    @Published private(set) var videoAspect: CGFloat = 16 / 9
     private var rateObservation: NSKeyValueObservation?
     private var loadTask: Task<Void, Never>?
     private var artwork: MPMediaItemArtwork?
@@ -139,6 +142,7 @@ final class PlayerManager: ObservableObject {
         errorMessage = nil
         related = []
         currentTime = 0
+        videoAspect = 16 / 9
         duration = 0
         artwork = nil
         player.pause()
@@ -425,6 +429,12 @@ final class PlayerManager: ObservableObject {
 
     private func startPlayback(_ item: AVPlayerItem, seekTo position: Double, autoPlay: Bool = true) {
         activateAudioSession()
+
+        sizeObservation = item.observe(\.presentationSize, options: [.new]) { [weak self] observed, _ in
+            let size = observed.presentationSize
+            guard size.width > 0, size.height > 0 else { return }
+            Task { @MainActor in self?.videoAspect = size.width / size.height }
+        }
 
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] observed, _ in
             let status = observed.status

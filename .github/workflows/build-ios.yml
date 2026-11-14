@@ -171,6 +171,7 @@ jobs:
           shot shorts -ktubeTab shorts
           WAIT=20 shot play-seek -ktubePlay dQw4w9WgXcQ -ktubeSeek 100 -ktubeDiag YES
           WAIT=14 shot floating -ktubePlay dQw4w9WgXcQ -ktubeCollapse YES
+          WAIT=16 shot vertical -ktubePlay JRJtg4-sDYQ -ktubeDiag YES
           WAIT=14 shot fullscreen -ktubePlay dQw4w9WgXcQ -ktubeFullscreen YES
           WAIT=15 shot play-music -ktubeTab music -ktubePlay dQw4w9WgXcQ -ktubeAudio YES
           WAIT=22 shot play-music-seek -ktubeTab music -ktubePlay dQw4w9WgXcQ -ktubeAudio YES -ktubeSeek 150
