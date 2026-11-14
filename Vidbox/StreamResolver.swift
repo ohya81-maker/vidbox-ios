@@ -126,6 +126,9 @@ actor StreamResolver {
                 ],
             ],
             "videoId": id,
+            // iOS 앱의 재생 파라미터. 이것이 없으면 일부 영상(음원사 뮤직비디오 등)의 고화질 파일이
+            // 처음 약 1분까지만 허용된다. 넣으면 1080p/HLS가 끝까지 받아진다 (2026-11 확인).
+            "params": "2AMB",
             "contentCheckOk": true,
             "racyCheckOk": true,
         ]
@@ -171,9 +174,8 @@ actor StreamResolver {
         }
         if let muxed { video.append(.single(muxed)) }
 
-        // YouTube는 일부 영상(주로 음원사 뮤직비디오)에 대해 인증 토큰 없는 요청이면
-        // 처음 약 1분까지만 허용하고 그 뒤는 403으로 막는다 → 중간 이동/계속 재생이 실패.
-        // 뒤쪽 1KB를 요청해 보고 막혀 있으면, 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
+        // 안전장치: 그래도 고화질 파일이 앞부분만 허용되면(뒤쪽 1KB 요청이 403)
+        // 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
         if let probe = audioFormat ?? videoFormats.first, await isGated(probe),
            let full = try? await fetchAndroidMuxed(id: id) {
             video.insert(.limited(full), at: 0)

@@ -6,6 +6,7 @@ import Foundation
 let cases: [(String, Bool)] = [
     ("dQw4w9WgXcQ", false),
     ("dQw4w9WgXcQ", true),
+    ("J9o7PcTaLjU", false), // 예전엔 1분 제한 → 360p 였던 영상
     ("9bZkp7q19f0", false), // 앞부분만 허용되는 영상 → Android 360p가 맨 앞이어야 함 (CI IP에서는 봇 확인으로 막힐 수 있음)
 ]
 
