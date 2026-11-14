@@ -18,6 +18,35 @@ let cases: [(String, Bool)] = [
     ("kJQP7kiw5Fk", false),
 ]
 
+// 진단: iOS 클라이언트 응답과 sidx 재생목록 생성 단계를 직접 확인
+for id in ["9bZkp7q19f0", "kJQP7kiw5Fk"] {
+    var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
+    let body: [String: Any] = ["context": ["client": ["clientName": "IOS", "clientVersion": "20.10.4", "deviceMake": "Apple",
+                                                        "deviceModel": "iPhone16,2", "osName": "iPhone", "osVersion": "18.3.2.22D82",
+                                                        "hl": "ko", "gl": "KR"]],
+                               "videoId": id, "contentCheckOk": true, "racyCheckOk": true]
+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    let (data, _) = try await URLSession.shared.data(for: request)
+    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+    let status = (json["playabilityStatus"] as? [String: Any]) ?? [:]
+    let streaming = json["streamingData"] as? [String: Any] ?? [:]
+    let raw = streaming["adaptiveFormats"] as? [[String: Any]] ?? []
+    let formats = raw.compactMap(DashFormat.init)
+    print("DIAG \(id) status=\(status["status"] ?? "-") reason=\(status["reason"] ?? "-") hls=\(streaming["hlsManifestUrl"] != nil) adaptive=\(raw.count) withUrl=\(raw.filter { $0["url"] != nil }.count) parsed=\(formats.count)")
+    if let first = raw.first { print("DIAG sample keys: \(first.keys.sorted())") }
+    if let audio = formats.first(where: { $0.itag == 140 }) {
+        do {
+            let url = try await HLSPlaylistLoader.shared.buildAudio(id: id, audio: audio)
+            print("DIAG audio playlist ok \(url)")
+        } catch {
+            print("DIAG audio playlist error \(error)")
+        }
+    }
+}
+
 var failures = 0
 for (id, audioOnly) in cases {
     let t0 = Date()
