@@ -258,18 +258,18 @@ struct PlayerStage: View {
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 17, weight: .semibold))
-                            .glassCircle(size: 38)
+                            .plainIcon(size: 38)
                     }
                     Spacer()
                     Button { player.setAudioOnly(!player.audioOnly) } label: {
                         Image(systemName: player.audioOnly ? "headphones.circle.fill" : "headphones")
                             .font(.system(size: 16, weight: .medium))
-                            .glassCircle(size: 38)
+                            .plainIcon(size: 38)
                     }
                     Button { player.stop() } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 16, weight: .semibold))
-                            .glassCircle(size: 38)
+                            .plainIcon(size: 38)
                     }
                 }
                 .padding(.horizontal, fullscreen ? 28 : 10)
@@ -281,19 +281,19 @@ struct PlayerStage: View {
                 HStack(spacing: fullscreen ? 64 : 40) {
                     Button { player.skip(by: -10); scheduleHide() } label: {
                         Image(systemName: "gobackward.10")
-                            .font(.system(size: 20, weight: .medium))
-                            .glassCircle(size: 48)
+                            .font(.system(size: 26, weight: .regular))
+                            .plainIcon(size: 48)
                     }
                     Button { player.togglePlayPause(); scheduleHide() } label: {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 28, weight: .semibold))
+                            .font(.system(size: 40, weight: .regular))
                             .contentTransition(.symbolEffect(.replace))
-                            .glassCircle(size: 66)
+                            .plainIcon(size: 66)
                     }
                     Button { player.skip(by: 10); scheduleHide() } label: {
                         Image(systemName: "goforward.10")
-                            .font(.system(size: 20, weight: .medium))
-                            .glassCircle(size: 48)
+                            .font(.system(size: 26, weight: .regular))
+                            .plainIcon(size: 48)
                     }
                 }
             }
@@ -491,5 +491,14 @@ struct MiniPlayerView: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
+    }
+}
+
+private extension View {
+    /// 배경 없이 아이콘만 (밝은 영상 위에서도 보이도록 옅은 그림자)
+    func plainIcon(size: CGFloat) -> some View {
+        self.frame(width: size, height: size)
+            .contentShape(Rectangle())
+            .shadow(color: .black.opacity(0.45), radius: 4, y: 1)
     }
 }

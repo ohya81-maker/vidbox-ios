@@ -1,30 +1,44 @@
 import SwiftUI
 
+enum FeedSource: Equatable {
+    case search(String)
+    case browse(String)
+}
+
 @MainActor
 final class FeedViewModel: ObservableObject {
     @Published private(set) var items: [VideoItem] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     private var continuation: String?
-    private var query = ""
+    private var source: FeedSource = .search("")
     private var requestID = 0
 
     var hasLoaded: Bool { !items.isEmpty }
 
     func load(_ query: String) async {
-        self.query = query
+        await load(source: .search(query))
+    }
+
+    func load(source: FeedSource) async {
+        self.source = source
         requestID += 1
         let id = requestID
         isLoading = true
         errorMessage = nil
         do {
-            let page = try await InnerTubeClient.shared.search(query)
+            let page: FeedPage
+            switch source {
+            case .search(let q): page = try await InnerTubeClient.shared.search(q)
+            case .browse(let b): page = try await InnerTubeClient.shared.browse(b)
+            }
             guard id == requestID else { return }
             items = page.items
             continuation = page.continuation
-            if page.items.isEmpty { errorMessage = "결과가 없습니다." }
+            if page.items.isEmpty { errorMessage = "표시할 동영상이 없습니다." }
         } catch {
             guard id == requestID else { return }
+            items = []
             errorMessage = "불러오지 못했습니다.\n\(error.localizedDescription)"
         }
         isLoading = false
@@ -38,14 +52,19 @@ final class FeedViewModel: ObservableObject {
         let id = requestID
         isLoading = true
         defer { isLoading = false }
-        guard let page = try? await InnerTubeClient.shared.searchContinuation(token), id == requestID else { return }
+        let page: FeedPage?
+        switch source {
+        case .search: page = try? await InnerTubeClient.shared.searchContinuation(token)
+        case .browse: page = try? await InnerTubeClient.shared.browseContinuation(token)
+        }
+        guard let page, id == requestID else { return }
         let known = Set(items.map(\.id))
         items.append(contentsOf: page.items.filter { !known.contains($0.id) })
         continuation = page.continuation
     }
 
     func reload() async {
-        await load(query)
+        await load(source: source)
     }
 }
 
@@ -81,7 +100,9 @@ struct FeedList: View {
 
 struct HomeView: View {
     @StateObject private var model = FeedViewModel()
+    @EnvironmentObject private var account: AccountStore
     @State private var selected = 0
+    @State private var showLogin = false
 
     private let chips: [(title: String, query: String)] = [
         ("전체", "인기 동영상"),
@@ -101,17 +122,44 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
+                    header
                     chipBar
                     FeedList(model: model)
                 }
             }
             .refreshable { await model.reload() }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { AppLogo() }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .task { if !model.hasLoaded { await model.load(chips[selected].query) } }
+            .toolbar(.hidden, for: .navigationBar)
+            .task(id: account.revision) { await loadSelected() }
+            .sheet(isPresented: $showLogin) { LoginView() }
         }
+    }
+
+    private func loadSelected() async {
+        if selected == 0 && account.isLoggedIn {
+            await model.load(source: .browse("FEwhat_to_watch"))
+            if model.items.isEmpty { await model.load(chips[0].query) }
+        } else {
+            await model.load(chips[selected].query)
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            AppLogo()
+            Spacer()
+            if account.isLoggedIn {
+                AvatarView(url: account.avatar, size: 30)
+            } else {
+                Button { showLogin = true } label: {
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(.primary)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
     }
 
     private var chipBar: some View {
@@ -121,7 +169,7 @@ struct HomeView: View {
                     ChipButton(title: chips[index].title, isOn: index == selected) {
                         guard index != selected else { return }
                         selected = index
-                        Task { await model.load(chips[index].query) }
+                        Task { await loadSelected() }
                     }
                 }
             }
@@ -131,15 +179,38 @@ struct HomeView: View {
     }
 }
 
+// MARK: - 로그인 계정의 피드 화면 (시청 기록, 구독)
+
+struct BrowseFeedScreen: View {
+    let title: String
+    let browseID: String
+    @StateObject private var model = FeedViewModel()
+
+    var body: some View {
+        ScrollView {
+            FeedList(model: model)
+        }
+        .refreshable { await model.reload() }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { if !model.hasLoaded { await model.load(source: .browse(browseID)) } }
+    }
+}
+
 // MARK: - 보관함
 
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerManager
+    @EnvironmentObject private var account: AccountStore
+    @State private var showLogin = false
+    @State private var confirmLogout = false
 
     var body: some View {
         NavigationStack {
             List {
+                accountSection
+
                 if !library.history.isEmpty {
                     Section {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -168,7 +239,7 @@ struct LibraryView: View {
                         .listRowSeparator(.hidden)
                     } header: {
                         HStack {
-                            Text("최근 본 동영상").font(.headline).foregroundStyle(.primary)
+                            Text("이 기기에서 본 동영상").font(.headline).foregroundStyle(.primary)
                             Spacer()
                             Button("모두 지우기") { library.clearHistory() }
                                 .font(.caption)
@@ -203,6 +274,64 @@ struct LibraryView: View {
             }
             .listStyle(.plain)
             .navigationTitle("보관함")
+            .sheet(isPresented: $showLogin) { LoginView() }
+            .confirmationDialog("로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {
+                Button("로그아웃", role: .destructive) { account.logout() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var accountSection: some View {
+        Section {
+            if account.isLoggedIn {
+                HStack(spacing: 14) {
+                    AvatarView(url: account.avatar, size: 54)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(account.name ?? "YouTube 계정").font(.headline)
+                        if let handle = account.handle {
+                            Text(handle).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button("로그아웃") { confirmLogout = true }
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .buttonStyle(.borderless)
+                }
+                .padding(.vertical, 4)
+                NavigationLink {
+                    BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory")
+                } label: {
+                    Label("YouTube 시청 기록", systemImage: "clock.arrow.circlepath")
+                }
+                NavigationLink {
+                    BrowseFeedScreen(title: "구독", browseID: "FEsubscriptions")
+                } label: {
+                    Label("구독 채널 새 동영상", systemImage: "play.square.stack")
+                }
+                NavigationLink {
+                    BrowseFeedScreen(title: "좋아요 표시한 동영상", browseID: "VLLL")
+                } label: {
+                    Label("좋아요 표시한 동영상", systemImage: "hand.thumbsup")
+                }
+            } else {
+                Button { showLogin = true } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("YouTube 계정으로 로그인").font(.headline)
+                            Text("내 시청 기록·구독·추천을 그대로 가져옵니다")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }

@@ -5,12 +5,14 @@ struct VidboxApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var player = PlayerManager.shared
     @StateObject private var library = LibraryStore.shared
+    @StateObject private var account = AccountStore.shared
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(player)
                 .environmentObject(library)
+                .environmentObject(account)
                 .tint(.primary)
         }
     }

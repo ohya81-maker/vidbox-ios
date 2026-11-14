@@ -56,49 +56,163 @@ struct MusicView: View {
     @StateObject private var model = MusicViewModel()
     @EnvironmentObject private var player: PlayerManager
     @State private var selectedMood: String?
+    @State private var searchText = ""
+    @State private var searchedQuery = ""
+    @State private var searchResults: [VideoItem] = []
+    @State private var isSearching = false
+    @State private var suggestions: [String] = []
+    @FocusState private var searchFocused: Bool
 
     private let moods = ["운동", "휴식", "집중", "출퇴근", "신나는", "잠잘 때", "드라이브", "카페", "비 오는 날", "슬픔"]
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    moodBar
-
-                    if model.isLoadingMood {
-                        ProgressView().frame(maxWidth: .infinity)
-                    } else if let mood = model.moodSection {
-                        quickPicks(mood)
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack {
+                        AppLogo(suffix: "Music")
+                        Spacer()
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
 
-                    if let quick = model.sections.first {
-                        quickPicks(quick)
-                    }
-                    ForEach(model.sections.dropFirst()) { section in
-                        shelf(section)
+                    searchBar
+
+                    if searchFocused && !searchText.isEmpty && !suggestions.isEmpty {
+                        suggestionList
+                    } else if !searchedQuery.isEmpty {
+                        searchResultList
+                    } else {
+                        moodBar
+
+                        if model.isLoadingMood {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else if let mood = model.moodSection {
+                            quickPicks(mood)
+                        }
+
+                        if let quick = model.sections.first {
+                            quickPicks(quick)
+                        }
+                        ForEach(model.sections.dropFirst()) { section in
+                            shelf(section)
+                        }
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.bottom, 8)
             }
+            .scrollDismissesKeyboard(.immediately)
             .refreshable { await model.reload() }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 24, height: 24)
-                            .background(
-                                LinearGradient(colors: [.pink, .purple], startPoint: .topLeading, endPoint: .bottomTrailing),
-                                in: Circle()
-                            )
-                        Text("Music").font(.system(size: 20, weight: .bold)).tracking(-0.5)
-                    }
-                    .fixedSize()
+            .toolbar(.hidden, for: .navigationBar)
+            .task { await model.loadAll() }
+            .task(id: searchText) {
+                guard searchFocused, !searchText.isEmpty else { suggestions = []; return }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else { return }
+                suggestions = await InnerTubeClient.shared.suggestions(for: searchText)
+            }
+        }
+    }
+
+    // MARK: 검색
+
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.secondary)
+            TextField("노래, 아티스트, 앨범 검색", text: $searchText)
+                .focused($searchFocused)
+                .submitLabel(.search)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onSubmit { runSearch(searchText) }
+            if !searchText.isEmpty || !searchedQuery.isEmpty {
+                Button {
+                    searchText = ""
+                    searchedQuery = ""
+                    searchResults = []
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .task { await model.loadAll() }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 46)
+        .glass(Capsule(), interactive: true)
+        .padding(.horizontal, 14)
+    }
+
+    private var suggestionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(suggestions, id: \.self) { s in
+                Button {
+                    searchText = s
+                    runSearch(s)
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        Text(s).lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var searchResultList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("'\(searchedQuery)' 검색 결과").font(.title3.weight(.bold)).lineLimit(1)
+                Spacer()
+                if let first = searchResults.first {
+                    Button {
+                        player.play(first, queue: searchResults, audio: true, expand: false)
+                    } label: {
+                        Label("모두 재생", systemImage: "play.fill")
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+
+            if isSearching {
+                placeholder
+            } else if searchResults.isEmpty {
+                Text("검색 결과가 없습니다")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 30)
+            } else {
+                LazyVStack(spacing: 10) {
+                    ForEach(searchResults) { song in
+                        songRow(song, queue: searchResults)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private func runSearch(_ query: String) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        searchFocused = false
+        searchedQuery = q
+        isSearching = true
+        Task {
+            let songs = await InnerTubeClient.shared.musicSongs(q)
+            guard searchedQuery == q else { return }
+            searchResults = songs
+            isSearching = false
         }
     }
 

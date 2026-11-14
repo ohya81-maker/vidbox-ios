@@ -87,9 +87,9 @@ final class ShortsPlayer: ObservableObject {
 
         task = Task { [weak self] in
             do {
-                let url = try await StreamResolver.shared.resolve(id: item.id, audioOnly: false)
+                let template = try await PlayerManager.loadItem(id: item.id, audioOnly: false)
                 guard !Task.isCancelled, let self, self.currentID == item.id else { return }
-                self.looper = AVPlayerLooper(player: self.player, templateItem: AVPlayerItem(url: url))
+                self.looper = AVPlayerLooper(player: self.player, templateItem: template)
                 PlayerManager.shared.activateAudioSession()
                 self.player.play()
             } catch {

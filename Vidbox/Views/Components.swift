@@ -233,20 +233,27 @@ struct VideoSurface: UIViewRepresentable {
 // MARK: - 앱 로고
 
 struct AppLogo: View {
+    var suffix: String? = nil
+
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "play.fill")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 28, height: 20)
+                .frame(width: 26, height: 18)
                 .background(
                     LinearGradient(colors: [Color(red: 1, green: 0.32, blue: 0.28), Color(red: 0.75, green: 0, blue: 0.15)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: 5, style: .continuous)
                 )
-            Text("Vidbox")
-                .font(.system(size: 20, weight: .bold))
-                .tracking(-0.6)
+            Text("KTUBE")
+                .font(.system(size: 20, weight: .heavy))
+                .tracking(-0.8)
+            if let suffix {
+                Text(suffix)
+                    .font(.system(size: 20, weight: .regular))
+                    .tracking(-0.5)
+            }
         }
         .fixedSize()
     }

@@ -33,6 +33,10 @@ final class InnerTubeClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(host, forHTTPHeaderField: "Origin")
+        request.setValue(music ? "67" : "1", forHTTPHeaderField: "X-Youtube-Client-Name")
+        for (key, value) in AuthStore.shared.headers(origin: host) {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
         var payload = body
         payload["context"] = context(music: music)
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -58,6 +62,62 @@ final class InnerTubeClient {
         return Self.parsePage(json).items.filter { $0.id != videoID }
     }
 
+    // MARK: 로그인 계정 전용
+
+    /// FEwhat_to_watch(맞춤 홈), FEhistory(시청 기록), FEsubscriptions(구독) 등
+    func browse(_ browseID: String) async throws -> FeedPage {
+        Self.parsePage(try await post("browse", body: ["browseId": browseID]))
+    }
+
+    func browseContinuation(_ token: String) async throws -> FeedPage {
+        Self.parsePage(try await post("browse", body: ["continuation": token]))
+    }
+
+    struct Profile {
+        var name: String?
+        var handle: String?
+        var avatar: URL?
+    }
+
+    func accountProfile() async -> Profile? {
+        guard let json = try? await post("account/account_menu", body: [:]) else { return nil }
+        var profile: Profile?
+        Self.walk(json) { key, value in
+            guard profile == nil, key == "activeAccountHeaderRenderer", let d = value as? [String: Any] else { return }
+            profile = Profile(
+                name: Self.text(d["accountName"]),
+                handle: Self.text(d["channelHandle"]),
+                avatar: Self.lastThumbnail(d["accountPhoto"])
+            )
+        }
+        return profile
+    }
+
+    /// 로그인한 계정의 YouTube 시청 기록에 남긴다 (yt-dlp --mark-watched 와 같은 방식)
+    func markWatched(videoID: String) async {
+        guard AuthStore.shared.isLoggedIn,
+              let json = try? await post("player", body: ["videoId": videoID]),
+              let base = Self.dig(json, "playbackTracking", "videostatsPlaybackUrl", "baseUrl") as? String,
+              var comps = URLComponents(string: base)
+        else { return }
+
+        let alphabet = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+        let cpn = String((0..<16).map { _ in alphabet.randomElement()! })
+        var items = comps.queryItems ?? []
+        items.removeAll { $0.name == "ver" || $0.name == "cpn" }
+        items.append(URLQueryItem(name: "ver", value: "2"))
+        items.append(URLQueryItem(name: "cpn", value: cpn))
+        comps.queryItems = items
+        guard let url = comps.url else { return }
+
+        var request = URLRequest(url: url)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        for (key, value) in AuthStore.shared.headers(origin: "https://www.youtube.com") {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        _ = try? await session.data(for: request)
+    }
+
     /// 쇼츠 목록: 검색 결과 안의 쇼츠 선반 + 3분 이하 세로 영상
     func shorts(_ query: String, continuation: String? = nil) async throws -> FeedPage {
         var body: [String: Any] = ["query": query]
@@ -67,15 +127,18 @@ final class InnerTubeClient {
 
     /// YouTube Music 노래 검색. 실패하면 일반 검색으로 대체한다.
     func musicSongs(_ query: String) async -> [VideoItem] {
-        if let json = try? await post("search", body: ["query": query, "params": "EgWKAQIIAWoKEAkQBRAKEAMQBA=="], music: true) {
-            let songs = Self.parseMusicPage(json)
-            if songs.count >= 3 { return songs }
-        }
+        var songs: [VideoItem] = []
         if let json = try? await post("search", body: ["query": query], music: true) {
-            let songs = Self.parseMusicPage(json)
-            if songs.count >= 3 { return songs }
+            songs = Self.parseMusicPage(json)
+            if songs.count >= 8 { return songs }
         }
-        return (try? await search(query + " 노래"))?.items ?? []
+        // 비로그인 상태의 YouTube Music 검색은 노래가 적게 나오므로 일반 검색에서 노래 길이 영상만 보충
+        let known = Set(songs.map(\.id))
+        let extra = ((try? await search(query + " 노래"))?.items ?? []).filter { item in
+            guard !known.contains(item.id), let s = Self.seconds(of: item.duration) else { return false }
+            return (60...900).contains(s)
+        }
+        return songs + extra
     }
 
     func suggestions(for query: String) async -> [String] {
@@ -162,13 +225,8 @@ final class InnerTubeClient {
         var seen = Set<String>()
         walk(json) { key, value in
             guard key == "musicResponsiveListItemRenderer", let d = value as? [String: Any] else { return }
-            var videoID = dig(d, "playlistItemData", "videoId") as? String
-            if videoID == nil {
-                walk(d) { k, v in
-                    if videoID == nil, k == "watchEndpoint", let id = dig(v, "videoId") as? String { videoID = id }
-                }
-            }
-            guard let id = videoID, seen.insert(id).inserted else { return }
+            // 노래/동영상만 (재생목록·앨범·아티스트·에피소드는 playlistItemData가 없거나 타입으로 걸러냄)
+            guard let id = dig(d, "playlistItemData", "videoId") as? String else { return }
 
             let columns = d["flexColumns"] as? [[String: Any]] ?? []
             func column(_ i: Int) -> [String] {
@@ -179,9 +237,14 @@ final class InnerTubeClient {
                     .filter { $0.trimmingCharacters(in: .whitespaces) != "•" && !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             }
             let title = column(0).joined()
-            let meta = column(1)
+            var meta = column(1)
+            let typeLabels: Set<String> = ["노래", "Song", "동영상", "Video"]
+            let excluded: Set<String> = ["에피소드", "Episode", "팟캐스트", "Podcast", "재생목록", "Playlist"]
+            if let first = meta.first, excluded.contains(first) { return }
+            if let first = meta.first, typeLabels.contains(first) { meta.removeFirst() }
+            guard seen.insert(id).inserted else { return }
             let duration = meta.last.flatMap { seconds(of: $0) != nil ? $0 : nil }
-            let artist = meta.first { seconds(of: $0) == nil && !$0.hasPrefix("노래") && !$0.hasPrefix("동영상") && $0 != "Song" && $0 != "Video" } ?? ""
+            let artist = meta.first { seconds(of: $0) == nil } ?? ""
             let thumb = lastThumbnail(dig(d, "thumbnail", "musicThumbnailRenderer", "thumbnail"))
 
             items.append(VideoItem(id: id, title: title, channel: artist, channelThumbnail: nil,
