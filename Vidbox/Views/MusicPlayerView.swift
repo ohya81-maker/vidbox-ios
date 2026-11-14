@@ -8,8 +8,7 @@ struct MusicPlayerView: View {
     @State private var dragOffset: CGFloat = 0
 
     var body: some View {
-        ZStack {
-            background
+        Group {
             if let item = player.current {
                 ScrollView {
                     VStack(spacing: 22) {
@@ -24,8 +23,12 @@ struct MusicPlayerView: View {
                     .padding(.bottom, 30)
                 }
                 .scrollIndicators(.hidden)
+            } else {
+                Color.clear
             }
         }
+        // 배경은 레이아웃에 영향을 주지 않도록 background로 (ZStack에 넣으면 큰 이미지가 화면을 밀어냄)
+        .background { background }
         .offset(y: dragOffset)
         .simultaneousGesture(
             DragGesture(minimumDistance: 25)
@@ -55,6 +58,8 @@ struct MusicPlayerView: View {
                 } placeholder: { Color.black }
                 .blur(radius: 70)
                 .opacity(0.7)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
             }
             LinearGradient(colors: [.black.opacity(0.15), .black.opacity(0.75)], startPoint: .top, endPoint: .bottom)
         }

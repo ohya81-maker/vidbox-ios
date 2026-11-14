@@ -102,7 +102,7 @@ struct HomeView: View {
     @StateObject private var model = FeedViewModel()
     @EnvironmentObject private var account: AccountStore
     @State private var selected = 0
-    @State private var showLogin = false
+    @State private var showLibrary = false
 
     private let chips: [(title: String, query: String)] = [
         ("전체", "인기 동영상"),
@@ -131,7 +131,7 @@ struct HomeView: View {
             .hidesTabBarOnScroll()
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }
-            .sheet(isPresented: $showLogin) { LoginView() }
+            .navigationDestination(isPresented: $showLibrary) { LibraryView() }
         }
     }
 
@@ -148,15 +148,17 @@ struct HomeView: View {
         HStack {
             AppLogo()
             Spacer()
-            if account.isLoggedIn {
-                AvatarView(url: account.avatar, size: 30)
-            } else {
-                Button { showLogin = true } label: {
+            // 보관함 (계정·시청 기록·저장한 동영상·설정)
+            Button { showLibrary = true } label: {
+                if account.isLoggedIn {
+                    AvatarView(url: account.avatar, size: 30)
+                } else {
                     Image(systemName: "person.crop.circle")
-                        .font(.system(size: 22, weight: .regular))
+                        .font(.system(size: 24, weight: .regular))
                         .foregroundStyle(.primary)
                 }
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
@@ -208,8 +210,8 @@ struct LibraryView: View {
     @State private var showLogin = false
     @State private var confirmLogout = false
 
+    /// 홈 화면 안으로 밀어 넣어(push) 보여주므로 자체 NavigationStack은 없다
     var body: some View {
-        NavigationStack {
             List {
                 accountSection
 
@@ -277,11 +279,11 @@ struct LibraryView: View {
             .listStyle(.plain)
             .hidesTabBarOnScroll()
             .navigationTitle("보관함")
+            .toolbar(.visible, for: .navigationBar)
             .sheet(isPresented: $showLogin) { LoginView() }
             .confirmationDialog("로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("로그아웃", role: .destructive) { account.logout() }
             }
-        }
     }
 
     @ViewBuilder

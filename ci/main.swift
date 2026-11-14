@@ -34,10 +34,10 @@ func measure(_ label: String, _ item: AVPlayerItem) async throws {
             player.seek(to: CMTime(seconds: 60, preferredTimescale: 600)) { c.resume(returning: $0) }
         }
         let resumed = try await waitUntil(62, timeout: 20)
-        seekResult = resumed.map { String(format: "OK %.2fs (seekDone=%@)", Date().timeIntervalSince(seekStart), done ? "Y" : "N") }
+        seekResult = resumed.map { _ in String(format: "OK %.2fs (seekDone=%@)", Date().timeIntervalSince(seekStart), done ? "Y" : "N") }
             ?? "FAIL t=\(String(format: "%.1f", player.currentTime().seconds)) tcs=\(player.timeControlStatus.rawValue) wait=\(player.reasonForWaitingToPlay?.rawValue ?? "-") log=\(item.errorLog()?.events.last.map { "\($0.errorStatusCode) \($0.errorComment ?? "")" } ?? "-")"
     }
-    print("PLAYTEST \(started != nil ? "OK  " : "FAIL") \(label) start=\(started.map { String(format: "%.2fs", Date().timeIntervalSince(t0) - 0) } ?? "-") seek60=\(seekResult) err=\(item.error.map { "\($0)" } ?? "none")")
+    print("PLAYTEST \(started != nil ? "OK  " : "FAIL") \(label) start=\(started.map { _ in String(format: "%.2fs", Date().timeIntervalSince(t0) - 0) } ?? "-") seek60=\(seekResult) err=\(item.error.map { "\($0)" } ?? "none")")
     player.pause()
 }
 

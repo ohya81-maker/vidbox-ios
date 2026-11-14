@@ -40,9 +40,6 @@ struct RootView: View {
             Tab("KIDS", systemImage: "face.smiling.inverse", value: AppTab.kids) {
                 KidsView().miniPlayerInset()
             }
-            Tab("보관함", systemImage: "person.crop.circle", value: AppTab.library) {
-                LibraryView().miniPlayerInset()
-            }
             Tab(value: AppTab.search, role: .search) {
                 SearchView().miniPlayerInset()
             }
