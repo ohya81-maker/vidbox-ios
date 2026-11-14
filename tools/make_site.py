@@ -3,8 +3,10 @@
 사용법:
     python tools/make_site.py [IPA 경로] [--base https://mistylake.synology.me/ktube] [--notes "변경 내용"]
 
-결과: dist/ktube/ 폴더 (index.html, apps.json, icon.png, KTUBE-<버전>.ipa)
-이 폴더를 통째로 시놀로지 Web Station 웹 폴더(예: /web/ktube)에 올리면 된다.
+결과: dist/youtube/ 폴더
+    docker-compose.yml, nginx.conf   ← 시놀로지 Container Manager 용 (nginx로 사이트 제공)
+    site/ index.html, manifest.plist, apps.json, icon.png, KTUBE-<버전>.ipa
+이 dist/youtube 안의 내용을 시놀로지 /docker/youtube 에 그대로 올리면 된다.
 """
 import argparse
 import datetime
@@ -18,10 +20,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 parser = argparse.ArgumentParser()
 parser.add_argument("ipa", nargs="?", default=os.path.join(ROOT, "KTUBE.ipa"))
-parser.add_argument("--base", default="https://mistylake.synology.me/ktube")
+parser.add_argument("--base", default="https://mistylake.synology.me:8443")
 parser.add_argument("--notes", default="")
-parser.add_argument("--out", default=os.path.join(ROOT, "dist", "ktube"))
+parser.add_argument("--out", default=os.path.join(ROOT, "dist", "youtube", "site"))
 args = parser.parse_args()
+
+# 사이트 폴더 옆에 시놀로지 Docker 설정 파일을 함께 둔다
+bundle_dir = os.path.dirname(os.path.abspath(args.out))
+os.makedirs(bundle_dir, exist_ok=True)
+for name in ("docker-compose.yml", "nginx.conf"):
+    shutil.copyfile(os.path.join(ROOT, "deploy", "synology", name), os.path.join(bundle_dir, name))
+# 이전 버전 IPA는 지운다 (사이트에는 최신 하나만)
+if os.path.isdir(args.out):
+    for old in os.listdir(args.out):
+        if old.endswith(".ipa"):
+            os.remove(os.path.join(args.out, old))
 
 project = open(os.path.join(ROOT, "project.yml"), encoding="utf-8").read()
 version = re.search(r'MARKETING_VERSION: "([^"]+)"', project).group(1)

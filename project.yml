@@ -1,6 +1,6 @@
 name: Vidbox
 options:
-  bundleIdPrefix: com.personal
+  bundleIdPrefix: com.mistylake
   deploymentTarget:
     iOS: "18.0"
   createIntermediateGroups: true
@@ -20,7 +20,7 @@ targets:
       - package: YouTubeKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.personal.vidbox
+        PRODUCT_BUNDLE_IDENTIFIER: com.mistylake.ktube
         PRODUCT_NAME: Vidbox
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
