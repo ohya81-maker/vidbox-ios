@@ -98,6 +98,7 @@ struct SearchView: View {
                 FeedList(model: results)
             }
             .scrollDismissesKeyboard(.immediately)
+            .hidesTabBarOnScroll()
         } else {
             explore
         }
@@ -176,6 +177,7 @@ struct SearchView: View {
             .padding(.top, 8)
         }
         .scrollDismissesKeyboard(.immediately)
+        .hidesTabBarOnScroll()
         .task { if !trending.hasLoaded { await trending.load("인기 급상승 동영상") } }
     }
 

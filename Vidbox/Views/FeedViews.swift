@@ -128,6 +128,7 @@ struct HomeView: View {
                 }
             }
             .refreshable { await model.reload() }
+            .hidesTabBarOnScroll()
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }
             .sheet(isPresented: $showLogin) { LoginView() }
@@ -191,6 +192,7 @@ struct BrowseFeedScreen: View {
             FeedList(model: model)
         }
         .refreshable { await model.reload() }
+        .hidesTabBarOnScroll()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task { if !model.hasLoaded { await model.load(source: .browse(browseID)) } }
@@ -273,6 +275,7 @@ struct LibraryView: View {
                 .tint(.green)
             }
             .listStyle(.plain)
+            .hidesTabBarOnScroll()
             .navigationTitle("보관함")
             .sheet(isPresented: $showLogin) { LoginView() }
             .confirmationDialog("로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {

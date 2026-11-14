@@ -102,6 +102,7 @@ struct MusicView: View {
                 .padding(.bottom, 8)
             }
             .scrollDismissesKeyboard(.immediately)
+            .hidesTabBarOnScroll()
             .refreshable { await model.reload() }
             .toolbar(.hidden, for: .navigationBar)
             .task { await model.loadAll() }

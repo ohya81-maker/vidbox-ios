@@ -72,6 +72,36 @@ jobs:
           name: Vidbox-ipa
           path: Vidbox.ipa
 
+      - name: Simulator screenshots
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          xcodebuild -project Vidbox.xcodeproj -scheme Vidbox -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath simbuild -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO build > sim-build.log 2>&1 || { tail -50 sim-build.log; exit 1; }
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in sorted(d.items(), reverse=True) if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "device $DEVICE"
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl install "$DEVICE" simbuild/Build/Products/Debug-iphonesimulator/Vidbox.app
+          mkdir -p shots
+          shot() { name=$1; shift; xcrun simctl launch --terminate-running-process "$DEVICE" com.personal.vidbox "$@"; sleep ${WAIT:-12}; xcrun simctl io "$DEVICE" screenshot "shots/$name.png"; }
+          shot home -ktubeTab home
+          shot music -ktubeTab music
+          shot kids -ktubeTab kids
+          shot shorts -ktubeTab shorts
+          WAIT=20 shot play-seek -ktubePlay dQw4w9WgXcQ -ktubeSeek 100 -ktubeDiag YES
+          WAIT=15 shot play-music -ktubeTab music -ktubePlay dQw4w9WgXcQ -ktubeAudio YES
+          xcrun simctl spawn "$DEVICE" log show --last 3m --predicate 'process == "Vidbox"' --style compact 2>/dev/null | grep -iE "error|fault|crash" | tail -30 || true
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: shots/
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

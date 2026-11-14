@@ -44,31 +44,14 @@ actor StreamResolver {
     private var prefetching = 0
     private let ttl: TimeInterval = 3 * 3600
 
-    // MARK: 방식별 실패 기억 (이 기기에서 안 되는 방식은 뒤로)
-
-    private static let brokenKey = "brokenSourceKinds"
-    nonisolated static func markBroken(_ kind: String) {
-        var set = Set(UserDefaults.standard.stringArray(forKey: brokenKey) ?? [])
-        set.insert(kind)
-        UserDefaults.standard.set(Array(set), forKey: brokenKey)
-    }
-    nonisolated static func markWorking(_ kind: String) {
-        var set = Set(UserDefaults.standard.stringArray(forKey: brokenKey) ?? [])
-        guard set.remove(kind) != nil else { return }
-        UserDefaults.standard.set(Array(set), forKey: brokenKey)
-    }
-    nonisolated private static func ordered(_ list: [PlaybackSource]) -> [PlaybackSource] {
-        let broken = Set(UserDefaults.standard.stringArray(forKey: brokenKey) ?? [])
-        return list.filter { !broken.contains($0.kind) } + list.filter { broken.contains($0.kind) }
-    }
-
     // MARK: Public
 
     func candidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
         let entry = try await entry(for: id)
+        // 영상 모드에서는 영상 후보를 반드시 먼저 (오디오 파일이 앞에 오면 화면 없이 소리만 나옴)
         let list = audioOnly ? entry.audio + entry.video : entry.video + entry.audio
         guard !list.isEmpty else { throw AppError.noPlayableStream }
-        return Self.ordered(list)
+        return list
     }
 
     /// 백그라운드로 미리 준비. 동시에 너무 많이 요청하지 않도록 4개로 제한.
@@ -155,8 +138,9 @@ actor StreamResolver {
         let audioFormat = formats.first { $0.itag == 140 }
             ?? formats.filter { $0.isAudio }.max { $0.bitrate < $1.bitrate }
         // 화질 후보: 720p 먼저(빠른 시작), 그다음 1080p / 480p 로 자동 전환
-        let videoFormats: [DashFormat] = [720, 1080, 480].compactMap { height in
-            formats.first { $0.isVideo && $0.codecs.hasPrefix("avc1") && $0.height == height }
+        // 쇼츠 같은 세로 영상은 720p가 720x1280이므로 "짧은 변" 기준으로 고른다
+        let videoFormats: [DashFormat] = [720, 1080, 480, 360].compactMap { p in
+            formats.first { $0.isVideo && $0.codecs.hasPrefix("avc1") && min($0.width, $0.height) == p }
         }
         let youtubeHLS = (streaming["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
         let muxed = (streaming["formats"] as? [[String: Any]])?

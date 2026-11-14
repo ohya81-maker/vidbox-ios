@@ -144,7 +144,7 @@ struct PlayerStage: View {
     @State private var seekAmount = 0
     @State private var seekForward = true
     @State private var seekTask: Task<Void, Never>?
-    @State private var showDiagnostics = false
+    @State private var showDiagnostics = UserDefaults.standard.bool(forKey: "ktubeDiag")
 
     var body: some View {
         ZStack {

@@ -18,8 +18,8 @@ struct VidboxApp: App {
     }
 }
 
-enum AppTab: Hashable {
-    case home, shorts, music, library, search
+enum AppTab: String, Hashable {
+    case home, shorts, music, kids, library, search
 }
 
 struct RootView: View {
@@ -37,6 +37,9 @@ struct RootView: View {
             Tab("음악", systemImage: "music.note", value: AppTab.music) {
                 MusicView().miniPlayerInset()
             }
+            Tab("KIDS", systemImage: "face.smiling.inverse", value: AppTab.kids) {
+                KidsView().miniPlayerInset()
+            }
             Tab("보관함", systemImage: "person.crop.circle", value: AppTab.library) {
                 LibraryView().miniPlayerInset()
             }
@@ -44,9 +47,28 @@ struct RootView: View {
                 SearchView().miniPlayerInset()
             }
         }
-        .minimizeTabBarOnScroll()
         .fullScreenCover(isPresented: $player.isExpanded) {
             PlayerView()
+        }
+        .task { await runLaunchHooks() }
+    }
+
+    /// 자동 화면 점검용 실행 인자 (CI 시뮬레이터 스크린샷): -ktubeTab music / -ktubePlay <id> / -ktubeSeek 100
+    private func runLaunchHooks() async {
+        let defaults = UserDefaults.standard
+        if let name = defaults.string(forKey: "ktubeTab"), let target = AppTab(rawValue: name) {
+            tab = target
+        }
+        if let id = defaults.string(forKey: "ktubePlay") {
+            let audio = defaults.bool(forKey: "ktubeAudio")
+            let item = VideoItem(id: id, title: "테스트 재생", channel: "KTUBE", channelThumbnail: nil, thumbnail: nil,
+                                 duration: nil, views: nil, published: nil, isLive: false)
+            player.play(item, queue: audio ? [item] : nil, audio: audio)
+            let seek = defaults.double(forKey: "ktubeSeek")
+            if seek > 0 {
+                try? await Task.sleep(nanoseconds: 7_000_000_000)
+                player.seek(to: seek)
+            }
         }
     }
 }
@@ -64,17 +86,34 @@ private struct MiniPlayerInset: ViewModifier {
     }
 }
 
+/// 아래로 스크롤하면 하단 탭바를 완전히 숨기고, 위로 스크롤하면 다시 보여준다 (YouTube 방식)
+private struct HideTabBarOnScroll: ViewModifier {
+    @State private var hidden = false
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { old, new in
+                let delta = new - old
+                if new < 40 {
+                    if hidden { withAnimation(.easeInOut(duration: 0.25)) { hidden = false } }
+                } else if delta > 6, !hidden {
+                    withAnimation(.easeInOut(duration: 0.25)) { hidden = true }
+                } else if delta < -6, hidden {
+                    withAnimation(.easeInOut(duration: 0.25)) { hidden = false }
+                }
+            }
+            .toolbar(hidden ? .hidden : .visible, for: .tabBar)
+    }
+}
+
 extension View {
     func miniPlayerInset() -> some View {
         modifier(MiniPlayerInset())
     }
 
-    @ViewBuilder
-    func minimizeTabBarOnScroll() -> some View {
-        if #available(iOS 26.0, *) {
-            self.tabBarMinimizeBehavior(.onScrollDown)
-        } else {
-            self
-        }
+    func hidesTabBarOnScroll() -> some View {
+        modifier(HideTabBarOnScroll())
     }
 }

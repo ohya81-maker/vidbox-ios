@@ -99,6 +99,8 @@ final class PlayerManager: ObservableObject {
     }
 
     private init() {
+        // 이전 버전이 저장한 "안 되는 방식" 기록 삭제 (오디오만 재생되는 문제의 원인)
+        UserDefaults.standard.removeObject(forKey: "brokenSourceKinds")
         // 주의: false로 두면 HLS가 '재생 중' 상태로 0초에 멈춘다 (CI에서 확인). 기본값(true) 유지.
         player.automaticallyWaitsToMinimizeStalling = true
         configureAudioSession()
@@ -324,13 +326,8 @@ final class PlayerManager: ObservableObject {
             guard !Task.isCancelled, let self, self.current?.id == item.id, !self.userPaused else { return }
             let now = self.player.currentTime().seconds
             let kind = self.sourceKind
-            if now.isFinite, now > position + 0.5 {
-                StreamResolver.markWorking(kind)
-                return
-            }
-            // 데이터는 받아졌는데 시간이 멈춰 있으면 이 기기에서 안 되는 방식으로 기억
-            let buffered = self.player.currentItem?.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? 0
-            if buffered > 3 { StreamResolver.markBroken(kind) }
+            if now.isFinite, now > position + 0.5 { return }
+            _ = kind
             self.failover(item: item)
         }
     }

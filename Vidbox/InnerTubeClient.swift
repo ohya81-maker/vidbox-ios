@@ -62,6 +62,70 @@ final class InnerTubeClient {
         return Self.parsePage(json).items.filter { $0.id != videoID }
     }
 
+    // MARK: YouTube Kids (어린이용 콘텐츠만 나오는 별도 API)
+
+    enum KidsAge: String, CaseIterable, Identifiable {
+        case preschool = "KIDS_CORPUS_PREFERENCE_PRESCHOOL"
+        case younger = "KIDS_CORPUS_PREFERENCE_YOUNGER"
+        case tween = "KIDS_CORPUS_PREFERENCE_TWEEN"
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .preschool: return "유아 (4세 이하)"
+            case .younger: return "어린이 (5~8세)"
+            case .tween: return "초등 고학년 (9~12세)"
+            }
+        }
+        var emoji: String {
+            switch self {
+            case .preschool: return "🧸"
+            case .younger: return "🎈"
+            case .tween: return "🚀"
+            }
+        }
+    }
+
+    private func postKids(_ endpoint: String, body: [String: Any], age: KidsAge) async throws -> Any {
+        let host = "https://www.youtubekids.com"
+        var request = URLRequest(url: URL(string: host + "/youtubei/v1/" + endpoint + "?prettyPrint=false")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(host, forHTTPHeaderField: "Origin")
+        var payload = body
+        payload["context"] = [
+            "client": [
+                "clientName": "WEB_KIDS",
+                "clientVersion": "2.20251110.00.00",
+                "hl": "ko",
+                "gl": "KR",
+                "kidsAppInfo": [
+                    "contentSettings": [
+                        "corpusPreference": age.rawValue,
+                        "kidsNoSearchMode": "YT_KIDS_NO_SEARCH_MODE_OFF",
+                    ],
+                ],
+            ],
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else { throw AppError.badResponse(status) }
+        return try JSONSerialization.jsonObject(with: data)
+    }
+
+    /// params: nil=추천, "kgQCCAI="=프로그램, "kgQCCAM="=음악, "kgQCCAQ="=학습, "kgQCCAU="=탐험
+    func kidsHome(params: String?, age: KidsAge) async throws -> [VideoItem] {
+        var body: [String: Any] = ["browseId": "FEkids_home"]
+        if let params { body["params"] = params }
+        return Self.parsePage(try await postKids("browse", body: body, age: age)).items
+    }
+
+    func kidsSearch(_ query: String, age: KidsAge) async throws -> [VideoItem] {
+        Self.parsePage(try await postKids("search", body: ["query": query], age: age)).items
+    }
+
     // MARK: 로그인 계정 전용
 
     /// FEwhat_to_watch(맞춤 홈), FEhistory(시청 기록), FEsubscriptions(구독) 등
