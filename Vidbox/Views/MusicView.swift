@@ -9,24 +9,68 @@ struct MusicSection: Identifiable {
     var loaded = false
 }
 
+/// 음악 탭에서 들은 곡 기록 (추천 「내 취향」의 씨앗) — 기기에만 저장
+enum MusicTaste {
+    private static let key = "musicTaste.recent"
+
+    struct Entry: Codable { let id: String; let title: String; let artist: String }
+
+    static func record(_ item: VideoItem) {
+        var list = recent()
+        list.removeAll { $0.id == item.id }
+        list.insert(Entry(id: item.id, title: item.title, artist: item.channel), at: 0)
+        if let data = try? JSONEncoder().encode(Array(list.prefix(40))) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    static func recent() -> [Entry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let list = try? JSONDecoder().decode([Entry].self, from: data) else { return [] }
+        return list
+    }
+
+    /// 많이 들은 아티스트 순
+    static func topArtists(_ n: Int) -> [String] {
+        var count: [String: Int] = [:]
+        for e in recent() where !e.artist.isEmpty { count[e.artist, default: 0] += 1 }
+        return count.sorted { $0.value > $1.value }.prefix(n).map(\.key)
+    }
+}
+
 @MainActor
 final class MusicViewModel: ObservableObject {
-    @Published var sections: [MusicSection] = [
-        MusicSection(id: "quick", title: "빠른 선곡", query: "요즘 인기 노래"),
-        MusicSection(id: "chart", title: "인기 차트", query: "멜론 차트 인기곡"),
-        MusicSection(id: "kpop", title: "K-POP 최신곡", query: "케이팝 최신곡"),
-        MusicSection(id: "ballad", title: "감성 발라드", query: "발라드 명곡"),
-        MusicSection(id: "hiphop", title: "힙합 · R&B", query: "국내 힙합 알앤비"),
-        MusicSection(id: "pop", title: "해외 팝", query: "pop hits"),
-        MusicSection(id: "indie", title: "인디 · 어쿠스틱", query: "인디 어쿠스틱"),
+    /// 섹션마다 검색어 후보 여러 개 — 새로고침할 때마다 다른 후보로 바꿔 최신곡이 돌아가며 나온다
+    private static let pools: [(id: String, title: String, queries: [String])] = [
+        ("quick", "빠른 선곡", ["요즘 인기 노래", "요즘 많이 듣는 노래", "최신 인기곡", "이번 주 인기 노래"]),
+        ("chart", "인기 차트", ["멜론 차트 인기곡", "멜론 TOP 100", "지니 차트 인기곡", "벅스 실시간 차트"]),
+        ("kpop", "K-POP 최신곡", ["케이팝 최신곡", "아이돌 신곡", "K-POP 신곡 발매", "케이팝 컴백 신곡"]),
+        ("ballad", "감성 발라드", ["발라드 명곡", "최신 발라드", "감성 발라드 신곡", "이별 발라드"]),
+        ("hiphop", "힙합 · R&B", ["국내 힙합 알앤비", "국힙 신곡", "알앤비 감성", "힙합 플레이리스트"]),
+        ("pop", "해외 팝", ["pop hits", "new pop songs", "billboard hot 100", "top pop songs this week"]),
+        ("indie", "인디 · 어쿠스틱", ["인디 어쿠스틱", "인디 신곡", "어쿠스틱 감성", "밴드 음악"]),
     ]
+
+    @Published var sections: [MusicSection] = MusicViewModel.makeSections()
+    /// 내가 들은 곡에서 이어지는 추천 (YouTube Music 라디오) — 들은 곡이 없으면 비어 있다
+    @Published private(set) var forYou: [MusicSection] = []
     @Published private(set) var moodSection: MusicSection?
     @Published private(set) var isLoadingMood = false
     private var loaded = false
 
+    private static func makeSections() -> [MusicSection] {
+        let year = Calendar.current.component(.year, from: Date())
+        return pools.map { p in
+            var q = p.queries.randomElement() ?? p.queries[0]
+            if p.id == "kpop" || p.id == "quick" { q += " \(year)" }   // 그 해 노래 위주
+            return MusicSection(id: p.id, title: p.title, query: q)
+        }
+    }
+
     func loadAll() async {
         guard !loaded else { return }
         loaded = true
+        async let personal: Void = loadForYou()
         await withTaskGroup(of: (String, [VideoItem]).self) { group in
             for section in sections {
                 let id = section.id, query = section.query
@@ -34,15 +78,44 @@ final class MusicViewModel: ObservableObject {
             }
             for await (id, items) in group {
                 if let index = sections.firstIndex(where: { $0.id == id }) {
-                    sections[index].items = items
+                    // 「빠른 선곡」은 매번 순서를 섞는다
+                    sections[index].items = id == "quick" ? items.shuffled() : items
                     sections[index].loaded = true
                 }
             }
         }
+        await personal
+    }
+
+    /// 최근 들은 곡 하나 → 비슷한 곡 라디오, 많이 들은 아티스트 → 그 아티스트 노래
+    private func loadForYou() async {
+        let recent = MusicTaste.recent()
+        guard !recent.isEmpty else { forYou = []; return }
+        var result: [MusicSection] = []
+        let seed = recent.prefix(5).randomElement()!
+        let radio = await InnerTubeClient.shared.musicRadio(seed: seed.id)
+        if radio.count >= 4 {
+            result.append(MusicSection(id: "radio", title: "'\(seed.title)'와 비슷한 곡", query: seed.title,
+                                       items: radio, loaded: true))
+        }
+        if let artist = MusicTaste.topArtists(3).randomElement() {
+            let songs = await InnerTubeClient.shared.musicSongs(artist + " 노래")
+            if songs.count >= 4 {
+                result.append(MusicSection(id: "artist", title: "\(artist) 추천", query: artist,
+                                           items: songs.shuffled(), loaded: true))
+            }
+        }
+        forYou = result
     }
 
     func reload() async {
         loaded = false
+        // 기존 곡은 남겨둔 채 검색어만 새로 골라 다시 불러온다
+        let fresh = Self.makeSections()
+        for i in sections.indices where i < fresh.count {
+            sections[i] = MusicSection(id: fresh[i].id, title: fresh[i].title, query: fresh[i].query,
+                                       items: sections[i].items, loaded: sections[i].loaded)
+        }
         await loadAll()
     }
 
@@ -101,6 +174,10 @@ struct MusicView: View {
                         if let quick = model.sections.first, !(quick.loaded && quick.items.isEmpty) {
                             quickPicks(quick)
                         }
+                        // 내가 들은 곡 기반 추천
+                        ForEach(model.forYou) { section in
+                            shelf(section)
+                        }
                         ForEach(model.sections.dropFirst().filter { !($0.loaded && $0.items.isEmpty) }) { section in
                             shelf(section)
                         }
@@ -120,7 +197,7 @@ struct MusicView: View {
                     Task { await model.selectMood(nil) }
                 }
             }
-            .hidesTabBarOnScroll()
+            // 음악 탭은 스크롤해도 하단 탭바를 그대로 둔다 (쇼츠처럼)
             // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
             .refreshable { await Task { await model.reload() }.value }
             .toolbar(.hidden, for: .navigationBar)

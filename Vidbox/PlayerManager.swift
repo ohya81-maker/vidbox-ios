@@ -137,6 +137,7 @@ final class PlayerManager: ObservableObject {
 
         loadTask?.cancel()
         current = item
+        if audioOnly { MusicTaste.record(item) }
         if newQueue != nil || !continuingQueue { rebuildOrder() }
         isLoading = true
         errorMessage = nil

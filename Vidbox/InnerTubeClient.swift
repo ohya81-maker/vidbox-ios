@@ -215,6 +215,30 @@ final class InnerTubeClient {
         return songs + extra
     }
 
+    /// YouTube Music 「라디오」 — 이 노래와 비슷한 곡들 (YouTube Music 추천 알고리즘)
+    func musicRadio(seed videoID: String) async -> [VideoItem] {
+        guard let json = try? await post("next", body: ["videoId": videoID, "playlistId": "RDAMVM" + videoID], music: true)
+        else { return [] }
+        return Self.parseRadio(json).filter { $0.id != videoID }
+    }
+
+    static func parseRadio(_ json: Any) -> [VideoItem] {
+        var items: [VideoItem] = []
+        var seen = Set<String>()
+        walk(json) { key, value in
+            guard key == "playlistPanelVideoRenderer", let d = value as? [String: Any],
+                  let id = d["videoId"] as? String, seen.insert(id).inserted else { return }
+            let title = text(d["title"]) ?? ""
+            let byline = (dig(d, "longBylineText", "runs") as? [[String: Any]])?.first?["text"] as? String
+                ?? (dig(d, "shortBylineText", "runs") as? [[String: Any]])?.first?["text"] as? String ?? ""
+            let thumb = lastThumbnail(d["thumbnail"])
+            items.append(VideoItem(id: id, title: title, channel: byline, channelThumbnail: nil,
+                                   thumbnail: upscaleMusicThumbnail(thumb), duration: text(d["lengthText"]),
+                                   views: nil, published: nil, isLive: false))
+        }
+        return items
+    }
+
     /// 검색 결과 안의 재생목록 ID ("VL..." browseId), 나온 순서대로
     static func playlistIDs(in json: Any) -> [String] {
         var ids: [String] = []

@@ -50,7 +50,8 @@ final class FeedViewModel: ObservableObject {
     }
 
     /// 여러 검색어 결과를 번갈아 섞어서 보여준다 (열 때마다 다른 홈 화면). 이미 본 영상은 뺀다.
-    func loadMixed(_ queries: [String], exclude: Set<String>) async {
+    /// deeper: 검색어마다 절반 확률로 두 번째 페이지까지 넘겨서 가져온다 (새로고침할 때 같은 영상이 반복되지 않게)
+    func loadMixed(_ queries: [String], exclude: Set<String>, deeper: Bool = false) async {
         guard let first = queries.first else { return }
         source = .search(first)
         requestID += 1
@@ -59,7 +60,14 @@ final class FeedViewModel: ObservableObject {
         errorMessage = nil
         let pages: [FeedPage] = await withTaskGroup(of: (Int, FeedPage?).self) { group in
             for (index, q) in queries.enumerated() {
-                group.addTask { (index, try? await InnerTubeClient.shared.search(q)) }
+                group.addTask {
+                    guard let page = try? await InnerTubeClient.shared.search(q) else { return (index, nil) }
+                    if deeper, Bool.random(), let token = page.continuation,
+                       let next = try? await InnerTubeClient.shared.searchContinuation(token), next.items.count >= 6 {
+                        return (index, next)
+                    }
+                    return (index, page)
+                }
             }
             var result = [FeedPage?](repeating: nil, count: queries.count)
             for await (index, page) in group { result[index] = page }
@@ -105,6 +113,12 @@ final class FeedViewModel: ObservableObject {
 
     func reload() async {
         await load(source: source)
+    }
+
+    /// 지금 화면의 영상을 빼고 순서를 섞는다 (새로고침 때 같은 목록이 그대로 나오지 않게)
+    func freshen(excluding old: Set<String>) {
+        let fresh = items.filter { !old.contains($0.id) }
+        items = (fresh.count >= 8 ? fresh : items).shuffled()
     }
 }
 
@@ -173,7 +187,7 @@ struct HomeView: View {
                 }
             }
             // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
-            .refreshable { await Task { await loadSelected() }.value }  // 당길 때마다 새로 섞인 홈
+            .refreshable { await Task { await loadSelected(refresh: true) }.value }  // 당길 때마다 다른 영상
             // 다른 태그를 보고 있을 때 왼쪽 가장자리 스와이프 → 「전체」
             .edgeSwipeBack(selected != 0) {
                 selected = 0
@@ -194,14 +208,22 @@ struct HomeView: View {
         "다큐멘터리", "라이브 클립", "커버곡", "애니메이션", "자동차 리뷰", "동물 영상", "요리 영상",
     ]
 
-    private func loadSelected() async {
+    /// refresh: 당겨서 새로고침 — 방금 보던 영상은 빼고 다른 영상으로 채운다
+    private func loadSelected(refresh: Bool = false) async {
         if chips[selected].title == "저장됨" { return }
+        let shown = refresh ? Set(model.items.map(\.id)) : []
         if selected == 0 && account.isLoggedIn {
             await model.load(source: .browse("FEwhat_to_watch"))
             if model.items.isEmpty { await model.load(chips[0].query) }
+            if refresh { model.freshen(excluding: shown) }
         } else if selected == 0 {
             let watched = Set(LibraryStore.shared.history.prefix(200).map(\.id))
-            await model.loadMixed(Array(homePool.shuffled().prefix(3)), exclude: watched)
+            await model.loadMixed(Array(homePool.shuffled().prefix(refresh ? 4 : 3)),
+                                  exclude: watched.union(shown), deeper: refresh)
+        } else if refresh {
+            // 태그 화면: 같은 검색어 결과의 다른 페이지를 섞어서 보여준다
+            await model.loadMixed([chips[selected].query, chips[selected].query + " 최신"],
+                                  exclude: shown, deeper: true)
         } else {
             await model.load(chips[selected].query)
         }
