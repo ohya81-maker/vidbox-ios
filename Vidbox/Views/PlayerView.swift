@@ -10,16 +10,24 @@ struct PlayerView: View {
     @State private var showDescription = false
 
     var body: some View {
-        Group {
-            if player.isFullscreen {
-                PlayerStage(fullscreen: true)
-                    .ignoresSafeArea()
-                    .statusBarHidden()
-                    .persistentSystemOverlays(.hidden)
-            } else if player.isQueueMode && player.audioOnly {
-                MusicPlayerView()
-            } else {
-                portrait
+        // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
+        GeometryReader { geo in
+            let landscape = geo.size.width > geo.size.height
+            Group {
+                if (player.isFullscreen || landscape) && !player.audioOnly {
+                    PlayerStage(fullscreen: true)
+                        .ignoresSafeArea()
+                        .statusBarHidden()
+                        .persistentSystemOverlays(.hidden)
+                } else if player.isQueueMode && player.audioOnly {
+                    MusicPlayerView()
+                } else {
+                    portrait
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .onChange(of: landscape) { _, isLandscape in
+                player.deviceRotated(landscape: isLandscape)
             }
         }
         .background(player.isFullscreen ? Color.black : Color(.systemBackground))
@@ -603,5 +611,102 @@ private extension View {
         self.frame(width: size, height: size)
             .contentShape(Rectangle())
             .shadow(color: .black.opacity(0.45), radius: 4, y: 1)
+    }
+}
+
+// MARK: - 떠 있는 작은 동영상 창 (PiP 스타일)
+
+struct FloatingVideoPlayer: View {
+    @EnvironmentObject private var player: PlayerManager
+    @AppStorage("floatingCorner") private var corner = 3 // 0 왼위 1 오위 2 왼아래 3 오아래
+    @State private var drag: CGSize = .zero
+
+    private let width: CGFloat = 196
+    private var height: CGFloat { width * 9 / 16 }
+
+    var body: some View {
+        GeometryReader { geo in
+            let origin = position(for: corner, in: geo)
+            card
+                .position(x: origin.x + drag.width, y: origin.y + drag.height)
+                .gesture(
+                    DragGesture()
+                        .onChanged { drag = $0.translation }
+                        .onEnded { value in
+                            // 놓은 위치(던진 방향 포함)에서 가장 가까운 모서리에 붙인다
+                            let end = CGPoint(x: origin.x + value.predictedEndTranslation.width,
+                                              y: origin.y + value.predictedEndTranslation.height)
+                            let nearest = (0..<4).min { a, b in
+                                distance(position(for: a, in: geo), end) < distance(position(for: b, in: geo), end)
+                            } ?? 3
+                            withAnimation(.spring(duration: 0.35)) {
+                                corner = nearest
+                                drag = .zero
+                            }
+                        }
+                )
+        }
+        .ignoresSafeArea(.keyboard)
+    }
+
+    private var card: some View {
+        ZStack {
+            Color.black
+            VideoSurface(manager: player)
+            if player.isLoading {
+                ProgressView().tint(.white)
+            }
+        }
+        .frame(width: width, height: height)
+        .overlay(alignment: .bottom) {
+            GeometryReader { g in
+                Rectangle()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: player.duration > 0 ? g.size.width * min(player.currentTime / player.duration, 1) : 0, height: 2)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            Button { player.togglePlayPause() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button { withAnimation { player.stop() } } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+        }
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.6), radius: 2)
+        .buttonStyle(.plain)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
+        .contentShape(Rectangle())
+        .onTapGesture { player.isExpanded = true }
+    }
+
+    /// 모서리 위치 (아래쪽은 하단 탭바 위로)
+    private func position(for corner: Int, in geo: GeometryProxy) -> CGPoint {
+        let margin: CGFloat = 12
+        let left = margin + width / 2
+        let right = geo.size.width - margin - width / 2
+        let top = margin + height / 2 + 50
+        let bottom = geo.size.height - height / 2 - 70
+        switch corner {
+        case 0: return CGPoint(x: left, y: top)
+        case 1: return CGPoint(x: right, y: top)
+        case 2: return CGPoint(x: left, y: bottom)
+        default: return CGPoint(x: right, y: bottom)
+        }
+    }
+
+    private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        hypot(a.x - b.x, a.y - b.y)
     }
 }

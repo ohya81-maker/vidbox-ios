@@ -168,6 +168,8 @@ jobs:
           shot kids -ktubeTab kids
           shot shorts -ktubeTab shorts
           WAIT=20 shot play-seek -ktubePlay dQw4w9WgXcQ -ktubeSeek 100 -ktubeDiag YES
+          WAIT=14 shot floating -ktubePlay dQw4w9WgXcQ -ktubeCollapse YES
+          WAIT=14 shot fullscreen -ktubePlay dQw4w9WgXcQ -ktubeFullscreen YES
           WAIT=15 shot play-music -ktubeTab music -ktubePlay dQw4w9WgXcQ -ktubeAudio YES
           WAIT=22 shot play-music-seek -ktubeTab music -ktubePlay dQw4w9WgXcQ -ktubeAudio YES -ktubeSeek 150
           xcrun simctl spawn "$DEVICE" log show --last 3m --predicate 'process == "Vidbox"' --style compact 2>/dev/null | grep -iE "error|fault|crash" | tail -30 || true

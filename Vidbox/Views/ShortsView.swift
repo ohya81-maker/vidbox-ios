@@ -11,7 +11,23 @@ final class ShortsFeed: ObservableObject {
     private var queryIndex = 0
     private var isLoading = false
 
-    private let queries = ["#shorts 인기", "#shorts 웃긴", "#shorts 음악", "#shorts 동물", "#shorts 게임", "#shorts 요리", "#shorts 스포츠"]
+    // 앱을 열 때마다 다른 주제로 시작하도록 순서를 섞는다
+    private let queries = ["#shorts 인기", "#shorts 웃긴", "#shorts 음악", "#shorts 동물", "#shorts 게임",
+                           "#shorts 요리", "#shorts 스포츠", "#shorts 댄스", "#shorts 브이로그", "#shorts 여행",
+                           "#shorts 일상", "#shorts 먹방", "#shorts 챌린지", "#shorts 감동"].shuffled()
+
+    // 이미 본 쇼츠는 다시 앞에 나오지 않게 (최근 500개 기억)
+    private static let seenKey = "seenShorts.v1"
+    private var seen: [String] = UserDefaults.standard.stringArray(forKey: ShortsFeed.seenKey) ?? []
+    private lazy var seenSet = Set(seen)
+
+    func markSeen(_ id: String) {
+        guard !seenSet.contains(id) else { return }
+        seenSet.insert(id)
+        seen.append(id)
+        if seen.count > 500 { seen.removeFirst(seen.count - 500); seenSet = Set(seen) }
+        UserDefaults.standard.set(seen, forKey: Self.seenKey)
+    }
 
     func loadInitial() async {
         guard items.isEmpty else { return }
@@ -29,7 +45,7 @@ final class ShortsFeed: ObservableObject {
             do {
                 let page = try await InnerTubeClient.shared.shorts(query, continuation: continuation)
                 let known = Set(items.map(\.id))
-                let fresh = page.items.filter { !known.contains($0.id) }
+                let fresh = page.items.filter { !known.contains($0.id) && !seenSet.contains($0.id) }.shuffled()
                 items.append(contentsOf: fresh)
                 if let next = page.continuation, !fresh.isEmpty {
                     continuation = next
@@ -207,6 +223,7 @@ struct ShortsView: View {
               let index = feed.items.firstIndex(where: { $0.id == id }) else { return }
         if player.isPlaying { player.pause() }
         shorts.play(feed.items[index])
+        feed.markSeen(id)
         shorts.prefetch(Array(feed.items.dropFirst(index + 1).prefix(2)))
     }
 }

@@ -21,9 +21,14 @@ final class PlayerManager: ObservableObject {
     @Published private(set) var related: [VideoItem] = []
     @Published private(set) var queue: [VideoItem] = []
     /// 현재 재생 중인 스트림이 오디오 전용인지
-    @Published private(set) var audioOnly = false
+    @Published private(set) var audioOnly = false {
+        didSet { if oldValue != audioOnly { updateRotationPolicy() } }
+    }
     @Published var isExpanded = false {
-        didSet { if !isExpanded && isFullscreen { setFullscreen(false) } }
+        didSet {
+            if !isExpanded && isFullscreen { setFullscreen(false) }
+            if oldValue != isExpanded { updateRotationPolicy() }
+        }
     }
     @Published private(set) var isFullscreen = false
     @Published var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? true {
@@ -269,10 +274,23 @@ final class PlayerManager: ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
+    /// 전체화면 버튼: 화면을 가로/세로로 돌린다
     func setFullscreen(_ on: Bool) {
         guard on != isFullscreen else { return }
         isFullscreen = on
-        OrientationController.set(landscape: on)
+        OrientationController.rotate(to: on ? .landscapeRight : .portrait)
+    }
+
+    /// 사용자가 폰을 직접 돌렸을 때 (가로 = 전체화면, 세로 = 일반)
+    func deviceRotated(landscape: Bool) {
+        if isFullscreen != landscape { isFullscreen = landscape }
+    }
+
+    /// 영상 플레이어가 펼쳐져 있을 때만 가로 회전을 허용 (목록 화면·음악 플레이어는 세로 고정)
+    private func updateRotationPolicy() {
+        let allow = isExpanded && !audioOnly
+        OrientationController.allowRotation(allow)
+        if !allow, isFullscreen { isFullscreen = false }
     }
 
     /// 재생 중에 영상 ↔ 오디오 전용 스트림 전환 (같은 위치에서 이어서)
@@ -602,8 +620,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 @MainActor
 enum OrientationController {
-    static func set(landscape: Bool) {
-        AppDelegate.orientationLock = landscape ? .landscape : .portrait
+    /// 회전 허용 여부. 허용하지 않으면 세로로 되돌린다.
+    static func allowRotation(_ allow: Bool) {
+        AppDelegate.orientationLock = allow ? .allButUpsideDown : .portrait
+        refresh()
+        if !allow { request(.portrait) }
+    }
+
+    /// 특정 방향으로 돌린다 (전체화면 버튼)
+    static func rotate(to mask: UIInterfaceOrientationMask) {
+        if !AppDelegate.orientationLock.contains(mask) {
+            AppDelegate.orientationLock = .allButUpsideDown
+        }
+        refresh()
+        request(mask)
+    }
+
+    private static func refresh() {
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows {
@@ -613,7 +646,13 @@ enum OrientationController {
                     controller = vc.presentedViewController
                 }
             }
-            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait)) { _ in }
+        }
+    }
+
+    private static func request(_ mask: UIInterfaceOrientationMask) {
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
         }
     }
 }
