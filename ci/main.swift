@@ -31,28 +31,23 @@ for (id, audioOnly) in cases {
         player.play()
 
         var ready: Date?
-        var buffered: Date?
-        let deadline = Date().addingTimeInterval(20)
+        var playing: Date?
+        var maxTime = 0.0
+        let deadline = Date().addingTimeInterval(25)
         while Date() < deadline {
             if item.status == .failed { break }
             if ready == nil, item.status == .readyToPlay { ready = Date() }
-            if buffered == nil, let r = item.loadedTimeRanges.first?.timeRangeValue, r.duration.seconds > 1 {
-                buffered = Date()
-            }
-            if ready != nil, buffered != nil { break }
+            let t = player.currentTime().seconds
+            if t.isFinite { maxTime = max(maxTime, t) }
+            if playing == nil, maxTime > 2 { playing = Date(); break }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         let resolveTime = t1.timeIntervalSince(t0)
-        let readyTime = ready.map { $0.timeIntervalSince(t0) }
-        let bufferTime = buffered.map { $0.timeIntervalSince(t0) }
-        let ok = ready != nil && buffered != nil
+        let ok = playing != nil
         if !ok { failures += 1 }
-        print(String(format: "PLAYTEST %@ %@ audio=%@ source=%@ resolve=%.2fs ready=%@ buffered=%@ size=%@ err=%@",
-                     ok ? "OK  " : "FAIL", id, audioOnly ? "Y" : "N", describe(source), resolveTime,
-                     readyTime.map { String(format: "%.2fs", $0) } ?? "-",
-                     bufferTime.map { String(format: "%.2fs", $0) } ?? "-",
-                     "\(item.presentationSize)",
-                     item.error.map { "\($0)" } ?? "none"))
+        let lastError = item.errorLog()?.events.last.map { "status=\($0.errorStatusCode) domain=\($0.errorDomain) comment=\($0.errorComment ?? "-") uri=\(($0.uri ?? "-").prefix(60))" } ?? "none"
+        let buffered = item.loadedTimeRanges.first.map { String(format: "%.1fs", $0.timeRangeValue.duration.seconds) } ?? "0"
+        print("PLAYTEST \(ok ? "OK  " : "FAIL") \(id) audio=\(audioOnly ? "Y" : "N") source=\(describe(source)) resolve=\(String(format: "%.2f", resolveTime))s ready=\(ready.map { String(format: "%.2fs", $0.timeIntervalSince(t0)) } ?? "-") playing2s=\(playing.map { String(format: "%.2fs", $0.timeIntervalSince(t0)) } ?? "-") t=\(String(format: "%.1f", maxTime)) tcs=\(player.timeControlStatus.rawValue) wait=\(player.reasonForWaitingToPlay?.rawValue ?? "-") buffered=\(buffered) size=\(item.presentationSize) itemErr=\(item.error.map { "\($0)" } ?? "none") log=\(lastError)")
         player.pause()
     } catch {
         failures += 1
