@@ -6,46 +6,17 @@ import Foundation
 func describe(_ source: PlaybackSource) -> String {
     switch source {
     case .single(let url): return url.absoluteString.contains("m3u8") ? "youtube-hls" : "single-file"
-    case .local: return "local-hls"
+    case .local(let url): return url.lastPathComponent == "yt.m3u8" ? "youtube-hls(720p-first)" : "local-hls(\(url.lastPathComponent))"
     case .split: return "split"
     }
 }
 
 let cases: [(String, Bool)] = [
-    ("9bZkp7q19f0", false), // 뮤직비디오 (HLS 없음 → local-hls 예상)
-    ("9bZkp7q19f0", true),
     ("dQw4w9WgXcQ", false),
-    ("kJQP7kiw5Fk", false),
+    ("dQw4w9WgXcQ", true),
+    ("jNQXAC9IVRw", false),
+    ("9bZkp7q19f0", false), // 뮤직비디오 — 데이터센터 IP에서는 봇 확인으로 막힐 수 있음
 ]
-
-// 진단: iOS 클라이언트 응답과 sidx 재생목록 생성 단계를 직접 확인
-for id in ["9bZkp7q19f0", "kJQP7kiw5Fk"] {
-    var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
-    request.httpMethod = "POST"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
-    let body: [String: Any] = ["context": ["client": ["clientName": "IOS", "clientVersion": "20.10.4", "deviceMake": "Apple",
-                                                        "deviceModel": "iPhone16,2", "osName": "iPhone", "osVersion": "18.3.2.22D82",
-                                                        "hl": "ko", "gl": "KR"]],
-                               "videoId": id, "contentCheckOk": true, "racyCheckOk": true]
-    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-    let (data, _) = try await URLSession.shared.data(for: request)
-    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-    let status = (json["playabilityStatus"] as? [String: Any]) ?? [:]
-    let streaming = json["streamingData"] as? [String: Any] ?? [:]
-    let raw = streaming["adaptiveFormats"] as? [[String: Any]] ?? []
-    let formats = raw.compactMap(DashFormat.init)
-    print("DIAG \(id) status=\(status["status"] ?? "-") reason=\(status["reason"] ?? "-") hls=\(streaming["hlsManifestUrl"] != nil) adaptive=\(raw.count) withUrl=\(raw.filter { $0["url"] != nil }.count) parsed=\(formats.count)")
-    if let first = raw.first { print("DIAG sample keys: \(first.keys.sorted())") }
-    if let audio = formats.first(where: { $0.itag == 140 }) {
-        do {
-            let url = try await HLSPlaylistLoader.shared.buildAudio(id: id, audio: audio)
-            print("DIAG audio playlist ok \(url)")
-        } catch {
-            print("DIAG audio playlist error \(error)")
-        }
-    }
-}
 
 var failures = 0
 for (id, audioOnly) in cases {

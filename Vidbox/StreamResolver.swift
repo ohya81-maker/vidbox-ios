@@ -147,9 +147,17 @@ actor StreamResolver {
             }
         }
 
+        // CI 테스트에서 자체 HLS 경로를 강제로 시험하기 위한 스위치
+        let forceDash = ProcessInfo.processInfo.environment["KTUBE_FORCE_DASH"] == "1"
+
         var video: PlaybackSource?
-        if let hls = (streaming["hlsManifestUrl"] as? String).flatMap(URL.init(string:)) {
-            video = .single(hls)
+        if !forceDash, let hls = (streaming["hlsManifestUrl"] as? String).flatMap(URL.init(string:)) {
+            // YouTube HLS는 144p부터 시작하므로 720p가 먼저 오도록 순서를 바꿔서 제공
+            if let local = try? await HLSPlaylistLoader.shared.reorderYouTubeHLS(id: id, master: hls) {
+                video = .local(local)
+            } else {
+                video = .single(hls)
+            }
         } else if let audioFormat, !videoFormats.isEmpty {
             if let local = try? await HLSPlaylistLoader.shared.buildVideo(id: id, videos: videoFormats, audio: audioFormat) {
                 video = .local(local)
@@ -317,6 +325,58 @@ final class HLSPlaylistLoader: NSObject, AVAssetResourceLoaderDelegate, @uncheck
         }
         store("/\(id)/master.m3u8", master)
         return URL(string: "ktube://p/\(id)/master.m3u8")!
+    }
+
+    /// YouTube HLS 마스터 재생목록에서 720p(없으면 가장 가까운 화질) 변형을 맨 앞으로
+    func reorderYouTubeHLS(id: String, master: URL) async throws -> URL {
+        var request = URLRequest(url: master)
+        request.timeoutInterval = 6
+        request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let text = String(data: data, encoding: .utf8), text.hasPrefix("#EXTM3U") else {
+            throw AppError.noPlayableStream
+        }
+
+        var header: [String] = []
+        var variants: [(info: String, uri: String, height: Int)] = []
+        let lines = text.components(separatedBy: .newlines)
+        var i = 0
+        while i < lines.count {
+            let line = lines[i].trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("#EXT-X-STREAM-INF"), i + 1 < lines.count {
+                let uri = lines[i + 1].trimmingCharacters(in: .whitespaces)
+                let absolute = URL(string: uri, relativeTo: master)?.absoluteString ?? uri
+                var height = 0
+                if let r = line.range(of: #"RESOLUTION=\d+x(\d+)"#, options: .regularExpression) {
+                    height = Int(line[r].split(separator: "x").last ?? "") ?? 0
+                }
+                variants.append((line, absolute, height))
+                i += 2
+                continue
+            }
+            if !line.isEmpty {
+                // EXT-X-MEDIA 등의 상대 URI도 절대 주소로
+                if line.hasPrefix("#EXT-X-MEDIA"), let r = line.range(of: #"URI="([^"]+)""#, options: .regularExpression) {
+                    let raw = String(line[r].dropFirst(5).dropLast())
+                    let absolute = URL(string: raw, relativeTo: master)?.absoluteString ?? raw
+                    header.append(line.replacingCharacters(in: r, with: "URI=\"\(absolute)\""))
+                } else {
+                    header.append(line)
+                }
+            }
+            i += 1
+        }
+        guard !variants.isEmpty else { throw AppError.noPlayableStream }
+
+        let preferred = variants.min { abs($0.height - 720) < abs($1.height - 720) }!.height
+        let ordered = variants.filter { $0.height == preferred } + variants.filter { $0.height != preferred }
+        var out = header
+        for v in ordered {
+            out.append(v.info)
+            out.append(v.uri)
+        }
+        store("/\(id)/yt.m3u8", out.joined(separator: "\n") + "\n")
+        return URL(string: "ktube://p/\(id)/yt.m3u8")!
     }
 
     /// 오디오만 있는 재생목록 (음악 모드)

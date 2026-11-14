@@ -26,7 +26,8 @@ jobs:
         timeout-minutes: 5
         run: |
           swiftc -O ci/main.swift Vidbox/StreamResolver.swift Vidbox/Models.swift -o playtest
-          ./playtest
+          echo "== YouTube HLS path"; ./playtest
+          echo "== app-built HLS from DASH (forced)"; KTUBE_FORCE_DASH=1 ./playtest
 
       - name: Install XcodeGen
         run: brew install xcodegen
