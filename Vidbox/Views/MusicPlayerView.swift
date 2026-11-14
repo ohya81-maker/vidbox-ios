@@ -11,19 +11,23 @@ struct MusicPlayerView: View {
     var body: some View {
         Group {
             if let item = player.current {
-                ScrollView {
-                    VStack(spacing: 22) {
-                        topBar
-                        artwork(item)
-                        titleRow(item)
-                        progress
-                        transport
-                        queueList
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 30)
+                // YouTube Music처럼 스크롤 없이 한 화면에 꽉 차게: 위 막대 · 큰 앨범아트 · 제목 · 버튼 · 진행 막대 · 재생 버튼 · 다음 트랙
+                VStack(spacing: 0) {
+                    topBar
+                    Spacer(minLength: 12)
+                    artwork(item)
+                    Spacer(minLength: 16)
+                    titleRow(item)
+                    actionRow(item)
+                        .padding(.top, 16)
+                    progress
+                        .padding(.top, 22)
+                    transport
+                        .padding(.top, 6)
+                    Spacer(minLength: 8)
+                    upNextHandle
                 }
-                .scrollIndicators(.hidden)
+                .padding(.horizontal, 24)
             } else {
                 Color.clear
             }
@@ -49,6 +53,78 @@ struct MusicPlayerView: View {
         .sheet(isPresented: $showSave) {
             if let item = player.current { SaveToFolderSheet(item: item, music: true) }
         }
+        .sheet(isPresented: $showQueue) {
+            ScrollView {
+                queueList
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+            }
+            .foregroundStyle(.white)
+            .buttonStyle(.plain)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(.black.opacity(0.85))
+            .environment(\.colorScheme, .dark)
+        }
+    }
+
+    @State private var showQueue = false
+
+    /// 맨 아래 손잡이 — 누르거나 위로 밀면 다음 트랙 목록
+    private var upNextHandle: some View {
+        Button { showQueue = true } label: {
+            VStack(spacing: 8) {
+                Capsule().fill(.white.opacity(0.35)).frame(width: 36, height: 5)
+                Text(nextTitle)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .simultaneousGesture(DragGesture(minimumDistance: 15).onEnded { v in
+            if v.translation.height < -30 { showQueue = true }
+        })
+    }
+
+    private var nextTitle: String {
+        let order = player.playOrder
+        if let i = order.firstIndex(where: { $0.id == player.current?.id }), i + 1 < order.count {
+            return "다음 곡: " + order[i + 1].title
+        }
+        return "다음 트랙"
+    }
+
+    /// 저장 · 공유 · 동영상으로 보기 — 둥근 알약 버튼
+    private func actionRow(_ item: VideoItem) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
+                     icon: library.isInAnyFolder(item) ? "checkmark" : "text.badge.plus") { showSave = true }
+                ShareLink(item: item.shareURL) {
+                    pillLabel("공유", icon: "arrowshape.turn.up.right")
+                }
+                pill("동영상", icon: "play.rectangle") { player.setAudioOnly(false) }
+                pill("다음 트랙", icon: "list.bullet") { showQueue = true }
+            }
+        }
+        .scrollClipDisabled()
+    }
+
+    private func pill(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { pillLabel(title, icon: icon) }
+    }
+
+    private func pillLabel(_ title: String, icon: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+            Text(title).font(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .background(.white.opacity(0.12), in: Capsule())
     }
 
     // MARK: 배경 — 앨범아트를 흐리게
@@ -116,14 +192,16 @@ struct MusicPlayerView: View {
             .overlay {
                 if player.isLoading { ProgressView().tint(.white).controlSize(.large) }
             }
-            .padding(.top, 6)
+            // 화면이 작아도 아래 버튼들이 밀리지 않게 남는 높이만큼만
+            .frame(maxWidth: .infinity)
+            .layoutPriority(-1)
     }
 
     private func titleRow(_ item: VideoItem) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.title3.weight(.bold))
+                    .font(.title2.weight(.bold))
                     .lineLimit(1)
                 Text(item.channel)
                     .font(.body)
@@ -131,17 +209,6 @@ struct MusicPlayerView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button { showSave = true } label: {
-                // 폴더에 저장 (원형 아이콘)
-                Image(systemName: library.isInAnyFolder(item) ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.system(size: 24, weight: .regular))
-                    .frame(width: 40, height: 40)
-            }
-            ShareLink(item: item.shareURL) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 21))
-                    .frame(width: 40, height: 40)
-            }
         }
     }
 
@@ -219,7 +286,7 @@ struct MusicPlayerView: View {
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.6))
             }
-            .padding(.top, 10)
+            .padding(.top, 14)
 
             ForEach(player.playOrder) { song in
                 Button {
