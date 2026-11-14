@@ -50,6 +50,9 @@ final class PlayerManager: ObservableObject {
     private var usedSlowPath = false
     private var watchdog: Task<Void, Never>?
     private var userPaused = false
+    private var seekWatchdog: Task<Void, Never>?
+    private var seekGeneration = 0
+    private var seekRecoveryKey: String?
     /// 지금 재생 중인 방식 (진단용)
     @Published private(set) var sourceKind = ""
 
@@ -182,8 +185,47 @@ final class PlayerManager: ObservableObject {
     func seek(to seconds: Double) {
         let target = max(0, duration > 0 ? min(seconds, duration - 0.5) : seconds)
         currentTime = target
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600)) { [weak self] _ in
-            Task { @MainActor in self?.updateNowPlaying() }
+        seekGeneration += 1
+        let generation = seekGeneration
+        let shouldPlay = !userPaused
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600)) { [weak self] finished in
+            Task { @MainActor in
+                guard let self else { return }
+                self.updateNowPlaying()
+                // 이동이 끝나면 재생 상태를 확실히 되살린다
+                if finished, shouldPlay, self.seekGeneration == generation { self.player.play() }
+            }
+        }
+        armSeekWatchdog(target: target, generation: generation)
+    }
+
+    /// 이동 후 6초가 지나도 재생 시간이 앞으로 가지 않으면: 같은 방식으로 그 위치에서 다시 불러오기 → 그래도 안 되면 다른 방식으로
+    private func armSeekWatchdog(target: Double, generation: Int) {
+        seekWatchdog?.cancel()
+        guard !userPaused, let item = current else { return }
+        seekWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled, let self, self.seekGeneration == generation,
+                  self.current?.id == item.id, !self.userPaused else { return }
+            let now = self.player.currentTime().seconds
+            if now.isFinite, now > target + 0.3 { return }
+
+            let key = "\(item.id)@\(Int(target))"
+            if self.seekRecoveryKey == key {
+                self.failover(item: item)
+                return
+            }
+            self.seekRecoveryKey = key
+            guard self.candidateIndex < self.candidates.count,
+                  let fresh = try? await StreamResolver.makeItem(self.candidates[self.candidateIndex]),
+                  self.current?.id == item.id
+            else {
+                self.failover(item: item)
+                return
+            }
+            self.startPlayback(fresh, seekTo: target)
+            self.seekGeneration += 1
+            self.armSeekWatchdog(target: target, generation: self.seekGeneration)
         }
     }
 
@@ -215,6 +257,7 @@ final class PlayerManager: ObservableObject {
     func stop() {
         loadTask?.cancel()
         watchdog?.cancel()
+        seekWatchdog?.cancel()
         player.pause()
         player.replaceCurrentItem(with: nil)
         current = nil

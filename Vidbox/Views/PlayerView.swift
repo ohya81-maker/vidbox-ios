@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - 전체 화면 플레이어
 
@@ -403,6 +404,9 @@ private extension View {
 }
 
 // MARK: - 얇은 진행 막대 (드래그로 탐색)
+//
+// SwiftUI DragGesture는 스크롤 뷰나 다른 제스처에 의해 취소되면 "손 뗌(onEnded)"이 오지 않아
+// 이동 명령이 전달되지 않는다. iOS 기본 UISlider는 손을 떼거나 취소될 때 확실히 알려주므로 그것을 쓴다.
 
 struct Scrubber: View {
     let current: Double
@@ -410,42 +414,87 @@ struct Scrubber: View {
     var tint: Color = .white
     var onScrub: (Double?) -> Void
     var onCommit: (Double) -> Void
-    @State private var dragTime: Double?
 
     var body: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            let shown = dragTime ?? current
-            let progress = duration > 0 ? min(max(shown / duration, 0), 1) : 0
-            let active = dragTime != nil
-            ZStack(alignment: .leading) {
-                Capsule().fill(tint.opacity(0.3))
-                    .frame(height: active ? 6 : 3)
-                Capsule().fill(tint)
-                    .frame(width: width * progress, height: active ? 6 : 3)
-                Circle().fill(tint)
-                    .frame(width: active ? 18 : 12, height: active ? 18 : 12)
-                    .offset(x: width * progress - (active ? 9 : 6))
-            }
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        guard duration > 0 else { return }
-                        let t = min(max(value.location.x / width, 0), 1) * duration
-                        dragTime = t
-                        onScrub(t)
-                    }
-                    .onEnded { _ in
-                        if let t = dragTime { onCommit(t) }
-                        dragTime = nil
-                        onScrub(nil)
-                    }
-            )
-            .animation(.easeOut(duration: 0.15), value: active)
+        ScrubberSlider(current: current, duration: duration, tint: UIColor(tint), onScrub: onScrub, onCommit: onCommit)
+            .frame(height: 30)
+    }
+}
+
+private final class ThinSlider: UISlider {
+    override func trackRect(forBounds bounds: CGRect) -> CGRect {
+        let height: CGFloat = isTracking ? 6 : 3
+        return CGRect(x: bounds.minX, y: bounds.midY - height / 2, width: bounds.width, height: height)
+    }
+
+    // 막대 근처를 넓게 잡아도 반응하도록
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: -6, dy: -12).contains(point)
+    }
+}
+
+private struct ScrubberSlider: UIViewRepresentable {
+    let current: Double
+    let duration: Double
+    let tint: UIColor
+    let onScrub: (Double?) -> Void
+    let onCommit: (Double) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UISlider {
+        let slider = ThinSlider()
+        slider.minimumValue = 0
+        slider.isContinuous = true
+        slider.minimumTrackTintColor = tint
+        slider.maximumTrackTintColor = tint.withAlphaComponent(0.3)
+        slider.setThumbImage(Self.dot(12, tint), for: .normal)
+        slider.setThumbImage(Self.dot(18, tint), for: .highlighted)
+        slider.addTarget(context.coordinator, action: #selector(Coordinator.began(_:)), for: .touchDown)
+        slider.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        slider.addTarget(context.coordinator, action: #selector(Coordinator.ended(_:)),
+                         for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        return slider
+    }
+
+    func updateUIView(_ slider: UISlider, context: Context) {
+        context.coordinator.parent = self
+        slider.maximumValue = Float(max(duration, 1))
+        if !context.coordinator.isTracking {
+            slider.value = Float(min(max(current, 0), max(duration, 1)))
         }
-        .frame(height: 26)
+    }
+
+    private static func dot(_ size: CGFloat, _ color: UIColor) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+            color.setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: size, height: size))
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var parent: ScrubberSlider
+        var isTracking = false
+
+        init(_ parent: ScrubberSlider) { self.parent = parent }
+
+        @objc func began(_ slider: UISlider) {
+            isTracking = true
+            slider.setNeedsLayout()
+        }
+
+        @objc func changed(_ slider: UISlider) {
+            isTracking = true
+            parent.onScrub(Double(slider.value))
+        }
+
+        @objc func ended(_ slider: UISlider) {
+            guard isTracking else { return }
+            isTracking = false
+            slider.setNeedsLayout()
+            parent.onCommit(Double(slider.value))
+            parent.onScrub(nil)
+        }
     }
 }
 

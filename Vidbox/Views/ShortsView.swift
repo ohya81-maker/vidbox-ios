@@ -213,14 +213,26 @@ struct ShortPage: View {
 
     var body: some View {
         ZStack {
+            // 썸네일은 레이아웃을 밀어내지 않도록 검은 배경의 overlay로, 세로(9:16) 썸네일을 원본 비율 그대로
             Color.black
-            AsyncImage(url: item.bestThumbnail) { image in
-                image.resizable().scaledToFill()
-            } placeholder: { Color.black }
-            .clipped()
+                .overlay {
+                    AsyncImage(url: URL(string: "https://i.ytimg.com/vi/\(item.id)/oar2.jpg")) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFit()
+                        } else if phase.error != nil {
+                            AsyncImage(url: item.bestThumbnail) { image in
+                                image.resizable().scaledToFit()
+                            } placeholder: { Color.black }
+                        } else {
+                            Color.black
+                        }
+                    }
+                }
+                .clipped()
 
             if isCurrent {
-                VideoSurface(avPlayer: shorts.player, gravity: .resizeAspectFill)
+                // 영상도 원본 비율 그대로 (잘라서 확대하지 않음)
+                VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect)
                     .opacity(shorts.isReady ? 1 : 0)
                 if !shorts.isReady && !shorts.failed {
                     ProgressView().tint(.white)
