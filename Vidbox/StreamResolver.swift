@@ -147,23 +147,20 @@ actor StreamResolver {
             }
         }
 
-        // CI 테스트에서 자체 HLS 경로를 강제로 시험하기 위한 스위치
-        let forceDash = ProcessInfo.processInfo.environment["KTUBE_FORCE_DASH"] == "1"
-
+        // 가장 빠른 순서: 앱이 만든 HLS(0.5초) → YouTube HLS(라이브 등, 720p부터) → 분리 파일 합치기
         var video: PlaybackSource?
-        if !forceDash, let hls = (streaming["hlsManifestUrl"] as? String).flatMap(URL.init(string:)) {
-            // YouTube HLS는 144p부터 시작하므로 720p가 먼저 오도록 순서를 바꿔서 제공
-            if let local = try? await HLSPlaylistLoader.shared.reorderYouTubeHLS(id: id, master: hls) {
+        let youtubeHLS = (streaming["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
+        if let audioFormat, !videoFormats.isEmpty,
+           let local = try? await HLSPlaylistLoader.shared.buildVideo(id: id, videos: videoFormats, audio: audioFormat) {
+            video = .local(local)
+        } else if let youtubeHLS {
+            if let local = try? await HLSPlaylistLoader.shared.reorderYouTubeHLS(id: id, master: youtubeHLS) {
                 video = .local(local)
             } else {
-                video = .single(hls)
+                video = .single(youtubeHLS)
             }
-        } else if let audioFormat, !videoFormats.isEmpty {
-            if let local = try? await HLSPlaylistLoader.shared.buildVideo(id: id, videos: videoFormats, audio: audioFormat) {
-                video = .local(local)
-            } else {
-                video = .split(video: videoFormats[0].url, audio: audioFormat.url)
-            }
+        } else if let audioFormat, let first = videoFormats.first {
+            video = .split(video: first.url, audio: audioFormat.url)
         } else if let muxed = (streaming["formats"] as? [[String: Any]])?
                     .first(where: { $0["url"] is String })
                     .flatMap({ ($0["url"] as? String).flatMap(URL.init(string:)) }) {
