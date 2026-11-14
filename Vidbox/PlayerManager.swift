@@ -99,8 +99,8 @@ final class PlayerManager: ObservableObject {
     }
 
     private init() {
-        // 버퍼를 오래 기다리지 않고 바로 재생 시작
-        player.automaticallyWaitsToMinimizeStalling = false
+        // 주의: false로 두면 HLS가 '재생 중' 상태로 0초에 멈춘다 (CI에서 확인). 기본값(true) 유지.
+        player.automaticallyWaitsToMinimizeStalling = true
         configureAudioSession()
         configureRemoteCommands()
         observePlayer()

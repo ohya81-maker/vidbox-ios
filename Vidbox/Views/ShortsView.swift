@@ -61,7 +61,7 @@ final class ShortsPlayer: ObservableObject {
     private var statusObservation: NSKeyValueObservation?
 
     init() {
-        player.automaticallyWaitsToMinimizeStalling = false
+        player.automaticallyWaitsToMinimizeStalling = true
         statusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
             let playing = observed.timeControlStatus == .playing
             Task { @MainActor in
