@@ -39,7 +39,21 @@ with zipfile.ZipFile(args.ipa) as z:
     app_dir = info_name.rsplit("/", 1)[0]
     info = plistlib.loads(z.read(info_name))
     signed = f"{app_dir}/embedded.mobileprovision" in names and any(n.startswith(f"{app_dir}/_CodeSignature/") for n in names)
+    # 서명된 IPA라면 프로비저닝 프로필(만료일, 등록된 기기 수, 팀)을 읽어 보여준다
+    profile = {}
+    if signed:
+        raw = z.read(f"{app_dir}/embedded.mobileprovision")
+        start, end = raw.find(b"<?xml"), raw.find(b"</plist>")
+        if start >= 0 and end > start:
+            profile = plistlib.loads(raw[start:end + len(b"</plist>")])
 bundle_id = info.get("CFBundleIdentifier", bundle_id)
+expires = profile.get("ExpirationDate")
+if signed:
+    print(f"서명됨: 팀={profile.get('TeamName')} 번들ID={info.get('CFBundleIdentifier')} "
+          f"기기 {len(profile.get('ProvisionedDevices', []))}대 만료={expires} "
+          f"개발용={profile.get('Entitlements', {}).get('get-task-allow')}")
+else:
+    print("서명되지 않은 IPA입니다 (plist 바로 설치 불가, SideStore/Sideloadly용)")
 version = info.get("CFBundleShortVersionString", version)
 build = info.get("CFBundleVersion", build)
 
@@ -113,7 +127,10 @@ with open(os.path.join(args.out, "manifest.plist"), "wb") as f:
 itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.plist", safe="")
 if signed:
     direct = (f'<a class="btn primary" href="{itms}">이 아이폰에 바로 설치</a>'
-              f'<p class="hint">서명된 IPA입니다 (번들 ID <code>{bundle_id}</code>). 설치 후 설정 → 일반 → VPN 및 기기 관리에서 신뢰를 눌러주세요.</p>')
+              f'<p class="hint">서명된 IPA입니다 (번들 ID <code>{bundle_id}</code>'
+              + (f', {expires:%Y-%m-%d %H:%M}까지 유효' if expires else '')
+              + '). 설치 후 설정 → 일반 → VPN 및 기기 관리에서 신뢰를 눌러주세요. '
+              '서명에 등록된 아이폰에서만 설치됩니다.</p>')
 else:
     direct = ('<p class="hint">지금 올린 IPA는 서명되지 않아 바로 설치할 수 없습니다. '
               '서명된 IPA로 이 페이지를 다시 만들면 여기에 「바로 설치」 버튼이 생깁니다.</p>')
