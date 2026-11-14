@@ -38,7 +38,12 @@ final class FeedViewModel: ObservableObject {
             if page.items.isEmpty { errorMessage = "표시할 동영상이 없습니다." }
         } catch {
             guard id == requestID else { return }
-            items = []
+            // 취소된 요청은 실패가 아님 — 기존 목록을 그대로 둔다. 목록이 있으면 실패해도 비우지 않는다.
+            let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
+            if cancelled || !items.isEmpty {
+                isLoading = false
+                return
+            }
             errorMessage = "불러오지 못했습니다.\n\(error.localizedDescription)"
         }
         isLoading = false
@@ -127,7 +132,8 @@ struct HomeView: View {
                     FeedList(model: model)
                 }
             }
-            .refreshable { await model.reload() }
+            // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
+            .refreshable { await Task { await model.reload() }.value }
             .hidesTabBarOnScroll()
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }
@@ -193,7 +199,8 @@ struct BrowseFeedScreen: View {
         ScrollView {
             FeedList(model: model)
         }
-        .refreshable { await model.reload() }
+        // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
+            .refreshable { await Task { await model.reload() }.value }
         .hidesTabBarOnScroll()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)

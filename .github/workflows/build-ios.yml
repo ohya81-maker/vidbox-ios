@@ -88,7 +88,7 @@ jobs:
           mkdir -p shots
           shot() { name=$1; shift; xcrun simctl launch --terminate-running-process "$DEVICE" com.personal.vidbox "$@"; sleep ${WAIT:-12}; xcrun simctl io "$DEVICE" screenshot "shots/$name.png"; }
           shot home -ktubeTab home
-          shot music -ktubeTab music
+          WAIT=20 shot music -ktubeTab music
           shot kids -ktubeTab kids
           shot shorts -ktubeTab shorts
           WAIT=20 shot play-seek -ktubePlay dQw4w9WgXcQ -ktubeSeek 100 -ktubeDiag YES

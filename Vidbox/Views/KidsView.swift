@@ -54,7 +54,8 @@ struct KidsView: View {
             )
             .toolbar(.hidden, for: .navigationBar)
             .task(id: "\(selected)-\(ageRaw)") { await load() }
-            .refreshable { await load() }
+            // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
+            .refreshable { await Task { await load() }.value }
         }
     }
 

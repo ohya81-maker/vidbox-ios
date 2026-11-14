@@ -5,6 +5,8 @@ struct MusicSection: Identifiable {
     let title: String
     let query: String
     var items: [VideoItem] = []
+    /// 불러오기를 마쳤는지 (마쳤는데 비어 있으면 섹션을 숨긴다)
+    var loaded = false
 }
 
 @MainActor
@@ -33,6 +35,7 @@ final class MusicViewModel: ObservableObject {
             for await (id, items) in group {
                 if let index = sections.firstIndex(where: { $0.id == id }) {
                     sections[index].items = items
+                    sections[index].loaded = true
                 }
             }
         }
@@ -47,7 +50,7 @@ final class MusicViewModel: ObservableObject {
         guard let mood else { moodSection = nil; return }
         isLoadingMood = true
         let items = await InnerTubeClient.shared.musicSongs(mood + " 플레이리스트 노래")
-        moodSection = MusicSection(id: "mood", title: mood, query: mood, items: items)
+        moodSection = MusicSection(id: "mood", title: mood, query: mood, items: items, loaded: true)
         isLoadingMood = false
     }
 }
@@ -91,10 +94,10 @@ struct MusicView: View {
                             quickPicks(mood)
                         }
 
-                        if let quick = model.sections.first {
+                        if let quick = model.sections.first, !(quick.loaded && quick.items.isEmpty) {
                             quickPicks(quick)
                         }
-                        ForEach(model.sections.dropFirst()) { section in
+                        ForEach(model.sections.dropFirst().filter { !($0.loaded && $0.items.isEmpty) }) { section in
                             shelf(section)
                         }
                     }
@@ -103,7 +106,8 @@ struct MusicView: View {
             }
             .scrollDismissesKeyboard(.immediately)
             .hidesTabBarOnScroll()
-            .refreshable { await model.reload() }
+            // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
+            .refreshable { await Task { await model.reload() }.value }
             .toolbar(.hidden, for: .navigationBar)
             .task { await model.loadAll() }
             .task(id: searchText) {
@@ -239,8 +243,10 @@ struct MusicView: View {
             if section.items.isEmpty {
                 placeholder
             } else {
+                // 곡 수만큼만 줄을 만들고 높이를 고정해서 아래 섹션과의 간격이 벌어지지 않게
+                let rows = min(4, section.items.count)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHGrid(rows: Array(repeating: GridItem(.fixed(56), spacing: 8), count: 4), spacing: 16) {
+                    LazyHGrid(rows: Array(repeating: GridItem(.fixed(56), spacing: 8), count: rows), spacing: 16) {
                         ForEach(section.items) { song in
                             songRow(song, queue: section.items)
                                 .frame(width: 300)
@@ -250,6 +256,7 @@ struct MusicView: View {
                     .scrollTargetLayout()
                 }
                 .scrollTargetBehavior(.viewAligned)
+                .frame(height: CGFloat(rows) * 56 + CGFloat(rows - 1) * 8)
             }
         }
     }

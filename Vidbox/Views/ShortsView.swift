@@ -138,11 +138,15 @@ struct ShortsView: View {
     @State private var currentID: String?
 
     var body: some View {
+        // 바깥: 하단 탭바/홈 인디케이터 높이만 읽는다. 안쪽: 화면 전체를 한 페이지로 써서
+        // 페이지 높이와 넘김 단위가 정확히 같게 (다음 영상이 아래에 걸쳐 보이지 않게)
+        GeometryReader { outer in
+        let bottomInset = outer.safeAreaInsets.bottom
         GeometryReader { geo in
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
                     ForEach(feed.items) { item in
-                        ShortPage(item: item, isCurrent: item.id == currentID, shorts: shorts)
+                        ShortPage(item: item, isCurrent: item.id == currentID, shorts: shorts, bottomInset: bottomInset)
                             .frame(width: geo.size.width, height: geo.size.height)
                             .id(item.id)
                             .onAppear {
@@ -157,8 +161,11 @@ struct ShortsView: View {
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $currentID)
             .scrollIndicators(.hidden)
+            .contentMargins(0, for: .scrollContent)
+            .ignoresSafeArea()
         }
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea()
+        }
         .background(Color.black)
         .overlay(alignment: .topLeading) {
             Text("Shorts")
@@ -208,6 +215,7 @@ struct ShortPage: View {
     let item: VideoItem
     let isCurrent: Bool
     @ObservedObject var shorts: ShortsPlayer
+    var bottomInset: CGFloat = 0
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerManager
 
@@ -273,13 +281,13 @@ struct ShortPage: View {
                 }
                 Spacer(minLength: 0)
                 VStack(spacing: 18) {
-                    sideButton(library.isSaved(item) ? "bookmark.fill" : "bookmark", label: "저장") {
+                    sideButton(library.isSaved(item) ? "checkmark.circle.fill" : "plus.circle", label: "저장") {
                         library.toggleSaved(item)
                     }
                     ShareLink(item: item.shareURL) {
-                        sideLabel("arrowshape.turn.up.right.fill", label: "공유")
+                        sideLabel("arrowshape.turn.up.right", label: "공유")
                     }
-                    sideButton("rectangle.portrait.and.arrow.forward", label: "크게") {
+                    sideButton("arrow.up.left.and.arrow.down.right", label: "크게") {
                         shorts.pause()
                         player.play(item)
                     }
@@ -288,7 +296,7 @@ struct ShortPage: View {
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
-            .padding(.bottom, 24)
+            .padding(.bottom, bottomInset + 16)
         }
     }
 
@@ -301,12 +309,12 @@ struct ShortPage: View {
         VStack(spacing: 4) {
             // 배경 없이 아이콘만 (밝은 화면에서도 보이도록 옅은 그림자)
             Image(systemName: icon)
-                .font(.system(size: 28, weight: .semibold))
-                .frame(width: 46, height: 40)
-            Text(label).font(.caption2.weight(.semibold))
+                .font(.system(size: 24, weight: .regular))
+                .frame(width: 44, height: 34)
+            Text(label).font(.system(size: 11, weight: .medium))
         }
         .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         .contentShape(Rectangle())
     }
 }

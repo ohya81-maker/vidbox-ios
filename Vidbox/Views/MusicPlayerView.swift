@@ -133,8 +133,9 @@ struct MusicPlayerView: View {
             }
             Spacer()
             Button { library.toggleSaved(item) } label: {
-                Image(systemName: library.isSaved(item) ? "bookmark.fill" : "bookmark")
-                    .font(.system(size: 22))
+                // 세로로 긴 책갈피 대신 원형 아이콘 (늘어져 보이지 않게)
+                Image(systemName: library.isSaved(item) ? "checkmark.circle.fill" : "plus.circle")
+                    .font(.system(size: 24, weight: .regular))
                     .frame(width: 40, height: 40)
             }
             ShareLink(item: item.shareURL) {

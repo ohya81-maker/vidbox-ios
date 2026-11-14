@@ -192,17 +192,35 @@ final class InnerTubeClient {
     /// YouTube Music 노래 검색. 실패하면 일반 검색으로 대체한다.
     func musicSongs(_ query: String) async -> [VideoItem] {
         var songs: [VideoItem] = []
+        var playlists: [String] = []
         if let json = try? await post("search", body: ["query": query], music: true) {
             songs = Self.parseMusicPage(json)
             if songs.count >= 8 { return songs }
+            playlists = Self.playlistIDs(in: json)
         }
-        // 비로그인 상태의 YouTube Music 검색은 노래가 적게 나오므로 일반 검색에서 노래 길이 영상만 보충
+        // 비로그인 상태의 YouTube Music 검색은 노래 대신 재생목록을 주므로, 재생목록을 열어 노래를 꺼낸다
+        for id in playlists.prefix(3) {
+            guard let json = try? await post("browse", body: ["browseId": id], music: true) else { continue }
+            let known = Set(songs.map(\.id))
+            songs += Self.parseMusicPage(json).filter { !known.contains($0.id) }
+            if songs.count >= 8 { return Array(songs.prefix(60)) }
+        }
+        // 그래도 부족하면 일반 검색에서 노래 길이(1~20분) 영상으로 보충
         let known = Set(songs.map(\.id))
-        let extra = ((try? await search(query + " 노래"))?.items ?? []).filter { item in
+        let extra = ((try? await search(query))?.items ?? []).filter { item in
             guard !known.contains(item.id), let s = Self.seconds(of: item.duration) else { return false }
-            return (60...900).contains(s)
+            return (60...1200).contains(s)
         }
         return songs + extra
+    }
+
+    /// 검색 결과 안의 재생목록 ID ("VL..." browseId), 나온 순서대로
+    static func playlistIDs(in json: Any) -> [String] {
+        var ids: [String] = []
+        walk(json) { key, value in
+            if key == "browseId", let id = value as? String, id.hasPrefix("VL"), !ids.contains(id) { ids.append(id) }
+        }
+        return ids
     }
 
     func suggestions(for query: String) async -> [String] {
@@ -307,7 +325,10 @@ final class InnerTubeClient {
             if let first = meta.first, excluded.contains(first) { return }
             if let first = meta.first, typeLabels.contains(first) { meta.removeFirst() }
             guard seen.insert(id).inserted else { return }
-            let duration = meta.last.flatMap { seconds(of: $0) != nil ? $0 : nil }
+            // 재생목록 안의 노래는 재생 시간이 오른쪽 고정 칸(fixedColumns)에 있다
+            let fixed = (d["fixedColumns"] as? [[String: Any]])?.first
+                .flatMap { text(dig($0, "musicResponsiveListItemFixedColumnRenderer", "text")) }
+            let duration = meta.last.flatMap { seconds(of: $0) != nil ? $0 : nil } ?? fixed.flatMap { seconds(of: $0) != nil ? $0 : nil }
             let artist = meta.first { seconds(of: $0) == nil } ?? ""
             let thumb = lastThumbnail(dig(d, "thumbnail", "musicThumbnailRenderer", "thumbnail"))
 
