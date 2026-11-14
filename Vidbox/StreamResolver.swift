@@ -141,8 +141,12 @@ actor StreamResolver {
         else { throw AppError.noPlayableStream }
 
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
-        let audioFormat = formats.first { $0.itag == 140 }
-            ?? formats.filter { $0.isAudio }.max { $0.bitrate < $1.bitrate }
+        // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
+        let allAudio = formats.filter { $0.isAudio }
+        let notDubbed = allAudio.filter { !$0.isAutoDubbed }
+        let originals = notDubbed.filter { $0.isDefaultAudio }
+        let pool = !originals.isEmpty ? originals : (!notDubbed.isEmpty ? notDubbed : allAudio)
+        let audioFormat = pool.first { $0.itag == 140 } ?? pool.max { $0.bitrate < $1.bitrate }
         // 화질 후보: 720p 먼저(빠른 시작), 그다음 1080p / 480p 로 자동 전환
         // 쇼츠 같은 세로 영상은 720p가 720x1280이므로 "짧은 변" 기준으로 고른다
         let videoFormats: [DashFormat] = [720, 1080, 480, 360].compactMap { p in
@@ -153,13 +157,14 @@ actor StreamResolver {
             .first(where: { $0["url"] is String })
             .flatMap { ($0["url"] as? String).flatMap(URL.init(string:)) }
 
-        // 오디오 후보: m4a 파일 직접(검증됨) → 자체 HLS
+        // 오디오 후보: 자체 HLS 먼저 → m4a 파일 직접
+        // (m4a를 직접 재생하면 아이폰이 길이를 실제의 2배로 계산하는 문제가 있어 뒤로 미룸)
         var audio: [PlaybackSource] = []
         if let audioFormat {
-            audio.append(.single(audioFormat.url))
             if let path = try? await LocalHLS.shared.buildAudio(id: id, audio: audioFormat) {
                 audio.append(.local(path))
             }
+            audio.append(.single(audioFormat.url))
         }
 
         // 영상 후보: 자체 HLS(가장 빠름) → YouTube HLS → 분리 파일 합치기 → 360p 단일 파일
@@ -310,6 +315,9 @@ struct DashFormat: Sendable {
     let initRange: ClosedRange<Int>
     let indexRange: ClosedRange<Int>
     let contentLength: Int?
+    /// 여러 언어 오디오가 있을 때: 원본(기본) 트랙인지 / YouTube 자동 더빙인지
+    let isDefaultAudio: Bool
+    let isAutoDubbed: Bool
 
     var isAudio: Bool { mime.hasPrefix("audio/mp4") }
     var isVideo: Bool { mime.hasPrefix("video/mp4") }
@@ -336,6 +344,9 @@ struct DashFormat: Sendable {
         self.initRange = initRange
         self.indexRange = indexRange
         self.contentLength = Int("\(d["contentLength"] ?? "")")
+        let track = d["audioTrack"] as? [String: Any]
+        self.isDefaultAudio = track == nil || (track?["audioIsDefault"] as? Bool ?? false)
+        self.isAutoDubbed = track?["isAutoDubbed"] as? Bool ?? false
     }
 
     private static func range(_ any: Any?) -> ClosedRange<Int>? {
