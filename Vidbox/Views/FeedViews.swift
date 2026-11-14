@@ -111,6 +111,7 @@ struct HomeView: View {
 
     private let chips: [(title: String, query: String)] = [
         ("전체", "인기 동영상"),
+        ("저장됨", ""),          // 내가 만든 저장 폴더 목록
         ("음악", "인기 음악"),
         ("K-POP", "케이팝 최신 뮤직비디오"),
         ("플레이리스트", "노래 모음 플레이리스트"),
@@ -129,7 +130,11 @@ struct HomeView: View {
                 VStack(spacing: 0) {
                     header
                     chipBar
-                    FeedList(model: model)
+                    if chips[selected].title == "저장됨" {
+                        SavedFoldersList()
+                    } else {
+                        FeedList(model: model)
+                    }
                 }
             }
             // 새로고침 제스처가 끝나며 작업이 취소되지 않도록 별도 작업으로 실행
@@ -138,10 +143,12 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }
             .navigationDestination(isPresented: $showLibrary) { LibraryView() }
+            .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
         }
     }
 
     private func loadSelected() async {
+        if chips[selected].title == "저장됨" { return }
         if selected == 0 && account.isLoggedIn {
             await model.load(source: .browse("FEwhat_to_watch"))
             if model.items.isEmpty { await model.load(chips[0].query) }

@@ -6,6 +6,7 @@ struct MusicPlayerView: View {
     @EnvironmentObject private var library: LibraryStore
     @State private var scrubTime: Double?
     @State private var dragOffset: CGFloat = 0
+    @State private var showSave = false
 
     var body: some View {
         Group {
@@ -45,6 +46,9 @@ struct MusicPlayerView: View {
         .environment(\.colorScheme, .dark)
         .foregroundStyle(.white)
         .buttonStyle(.plain)
+        .sheet(isPresented: $showSave) {
+            if let item = player.current { SaveToFolderSheet(item: item) }
+        }
     }
 
     // MARK: 배경 — 앨범아트를 흐리게
@@ -53,9 +57,7 @@ struct MusicPlayerView: View {
         ZStack {
             Color.black
             if let item = player.current {
-                AsyncImage(url: item.bestThumbnail) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: { Color.black }
+                HiResArtwork(item: item)
                 .blur(radius: 70)
                 .opacity(0.7)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -106,11 +108,8 @@ struct MusicPlayerView: View {
         Color.white.opacity(0.08)
             .aspectRatio(1, contentMode: .fit)
             .overlay {
-                AsyncImage(url: item.bestThumbnail) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Image(systemName: "music.note").font(.system(size: 60)).foregroundStyle(.white.opacity(0.3))
-                }
+                // 고화질 표지 (1280x720 / 앨범아트 1200px)
+                HiResArtwork(item: item)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(color: .black.opacity(0.4), radius: 20, y: 10)
@@ -132,9 +131,9 @@ struct MusicPlayerView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button { library.toggleSaved(item) } label: {
-                // 세로로 긴 책갈피 대신 원형 아이콘 (늘어져 보이지 않게)
-                Image(systemName: library.isSaved(item) ? "checkmark.circle.fill" : "plus.circle")
+            Button { showSave = true } label: {
+                // 폴더에 저장 (원형 아이콘)
+                Image(systemName: library.isInAnyFolder(item) ? "checkmark.circle.fill" : "plus.circle")
                     .font(.system(size: 24, weight: .regular))
                     .frame(width: 40, height: 40)
             }

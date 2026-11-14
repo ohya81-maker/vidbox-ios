@@ -590,10 +590,9 @@ final class PlayerManager: ObservableObject {
     }
 
     private func loadArtwork(for item: VideoItem) {
-        let url = item.bestThumbnail
         Task { [weak self] in
-            guard let (data, _) = try? await URLSession.shared.data(from: url),
-                  let image = UIImage(data: data) else { return }
+            // 잠금화면·제어센터 표지도 고화질로
+            guard let image = await ArtworkLoader.shared.image(for: item) else { return }
             let art = Self.makeArtwork(image)
             guard let self, self.current?.id == item.id else { return }
             self.artwork = art

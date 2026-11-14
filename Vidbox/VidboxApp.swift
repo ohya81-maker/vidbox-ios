@@ -25,6 +25,8 @@ enum AppTab: String, Hashable {
 struct RootView: View {
     @EnvironmentObject private var player: PlayerManager
     @State private var tab: AppTab = .home
+    @State private var searchText = ""
+    @State private var searchQuery = ""
 
     var body: some View {
         TabView(selection: $tab) {
@@ -41,8 +43,14 @@ struct RootView: View {
                 KidsView().miniPlayerInset()
             }
             Tab(value: AppTab.search, role: .search) {
-                SearchView().miniPlayerInset()
+                SearchView(text: $searchText, query: $searchQuery).miniPlayerInset()
             }
+        }
+        // iOS 26: 검색 탭을 누르면 하단 탭이 왼쪽으로 접히고 그 자리에 검색창이 나온다
+        .searchable(text: $searchText, prompt: "동영상, 채널, 음악 검색")
+        .onSubmit(of: .search) {
+            let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !q.isEmpty { searchQuery = q }
         }
         // 영상을 접으면 화면 모서리에 떠 있는 작은 동영상 창 (PiP 스타일)
         .overlay {
@@ -63,6 +71,12 @@ struct RootView: View {
         let defaults = UserDefaults.standard
         if let name = defaults.string(forKey: "ktubeTab"), let target = AppTab(rawValue: name) {
             tab = target
+        }
+        if let q = defaults.string(forKey: "ktubeSearch") {
+            tab = .search
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            searchText = q
+            searchQuery = q
         }
         if let id = defaults.string(forKey: "ktubePlay") {
             let audio = defaults.bool(forKey: "ktubeAudio")

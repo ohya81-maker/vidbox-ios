@@ -8,6 +8,7 @@ struct PlayerView: View {
     @EnvironmentObject private var library: LibraryStore
     @State private var dragOffset: CGFloat = 0
     @State private var showDescription = false
+    @State private var showSave = false
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -31,6 +32,9 @@ struct PlayerView: View {
             }
         }
         .background(player.isFullscreen ? Color.black : Color(.systemBackground))
+        .sheet(isPresented: $showSave) {
+            if let item = player.current { SaveToFolderSheet(item: item) }
+        }
     }
 
     private var portrait: some View {
@@ -89,9 +93,9 @@ struct PlayerView: View {
     private func actions(_ item: VideoItem) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                pill(library.isSaved(item) ? "저장됨" : "저장",
-                     icon: library.isSaved(item) ? "bookmark.fill" : "bookmark") {
-                    library.toggleSaved(item)
+                pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
+                     icon: library.isInAnyFolder(item) ? "checkmark.circle.fill" : "plus.circle") {
+                    showSave = true
                 }
                 pill("오디오 전용", icon: player.audioOnly ? "headphones.circle.fill" : "headphones",
                      isOn: player.audioOnly) {

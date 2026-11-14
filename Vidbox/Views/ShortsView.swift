@@ -233,6 +233,7 @@ struct ShortPage: View {
     let isCurrent: Bool
     @ObservedObject var shorts: ShortsPlayer
     var bottomInset: CGFloat = 0
+    @State private var showSave = false
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerManager
 
@@ -280,6 +281,7 @@ struct ShortPage: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { if isCurrent { shorts.togglePause() } }
+        .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
         .overlay(alignment: .bottom) {
             HStack(alignment: .bottom, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -298,8 +300,8 @@ struct ShortPage: View {
                 }
                 Spacer(minLength: 0)
                 VStack(spacing: 18) {
-                    sideButton(library.isSaved(item) ? "checkmark.circle.fill" : "plus.circle", label: "저장") {
-                        library.toggleSaved(item)
+                    sideButton(library.isInAnyFolder(item) ? "checkmark.circle.fill" : "plus.circle", label: "저장") {
+                        showSave = true
                     }
                     ShareLink(item: item.shareURL) {
                         sideLabel("arrowshape.turn.up.right", label: "공유")

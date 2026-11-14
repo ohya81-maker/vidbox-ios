@@ -174,6 +174,7 @@ struct VideoRow: View {
 struct VideoMenu: View {
     let item: VideoItem
     @EnvironmentObject private var library: LibraryStore
+    @State private var showSave = false
 
     var body: some View {
         Menu {
@@ -181,10 +182,13 @@ struct VideoMenu: View {
                 library.toggleSaved(item)
             } label: {
                 if library.isSaved(item) {
-                    Label("저장 취소", systemImage: "bookmark.slash")
+                    Label("나중에 볼 동영상에서 빼기", systemImage: "clock.badge.xmark")
                 } else {
-                    Label("나중에 볼 동영상에 저장", systemImage: "bookmark")
+                    Label("나중에 볼 동영상에 저장", systemImage: "clock")
                 }
+            }
+            Button { showSave = true } label: {
+                Label("폴더에 저장…", systemImage: "folder.badge.plus")
             }
             ShareLink(item: item.shareURL) {
                 Label("공유", systemImage: "square.and.arrow.up")
@@ -195,6 +199,7 @@ struct VideoMenu: View {
                 .foregroundStyle(.primary)
                 .frame(width: 24, height: 28)
         }
+        .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
     }
 }
 
