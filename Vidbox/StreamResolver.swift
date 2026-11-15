@@ -430,6 +430,18 @@ final class LocalHLS: @unchecked Sendable {
         return files[path]
     }
 
+    /// "/<id>/s<itag>" → 실제 googlevideo 파일 주소 (구간은 앱이 대신 받아 넘긴다)
+    private var upstream: [String: URL] = [:]
+
+    private func storeUpstream(_ path: String, _ url: URL) {
+        lock.lock(); upstream[path] = url; lock.unlock()
+    }
+
+    private func upstreamURL(_ path: String) -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        return upstream[path]
+    }
+
     // MARK: 서버
 
     /// "http://127.0.0.1:<port>" — 서버가 꺼져 있으면 다시 켠다
@@ -491,10 +503,33 @@ final class LocalHLS: @unchecked Sendable {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, _, _ in
             guard let self else { connection.cancel(); return }
             var path = ""
-            if let data, let request = String(data: data, encoding: .utf8),
-               let firstLine = request.components(separatedBy: "\r\n").first {
-                let parts = firstLine.split(separator: " ")
+            var range: String?
+            if let data, let request = String(data: data, encoding: .utf8) {
+                let lines = request.components(separatedBy: "\r\n")
+                let parts = (lines.first ?? "").split(separator: " ")
                 if parts.count >= 2 { path = String(parts[1]).components(separatedBy: "?").first ?? "" }
+                range = lines.first { $0.lowercased().hasPrefix("range:") }
+                    .map { String($0.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
+            }
+            // 영상 구간: 느린 서버면 보조 서버로 우회해서 받아 넘긴다
+            if self.lookup(path) == nil, let source = self.upstreamURL(path) {
+                Task {
+                    let response: Data
+                    if let (body, http) = await Self.hedgedFetch(source, range: range) {
+                        var header = http.statusCode == 206 ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n"
+                        header += "Content-Type: \(http.value(forHTTPHeaderField: "Content-Type") ?? "video/mp4")\r\n"
+                        header += "Content-Length: \(body.count)\r\n"
+                        if let contentRange = http.value(forHTTPHeaderField: "Content-Range") {
+                            header += "Content-Range: \(contentRange)\r\n"
+                        }
+                        header += "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+                        response = Data(header.utf8) + body
+                    } else {
+                        response = Data("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                    }
+                    connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+                }
+                return
             }
             let response: Data
             if let body = self.lookup(path) {
@@ -508,15 +543,103 @@ final class LocalHLS: @unchecked Sendable {
         }
     }
 
+    // MARK: 느린 서버 우회 (YouTube 앱처럼 보조 서버로 동시 요청)
+    //
+    // YouTube가 정해 주는 근처 캐시 서버는 아직 캐시되지 않은 뒷부분 구간을 6~30초씩 늦게 주기도 한다
+    // (영상 중간으로 넘기면 멈춘 것처럼 보임). 같은 주소의 mn/fvip 목록에 있는 보조 서버는 같은 구간을
+    // 1초 안에 준다. 응답이 1.2초 안에 시작되지 않으면 보조 서버에도 요청하고, 먼저 응답한 쪽을 쓴다.
+
+    /// 같은 파일을 주는 보조 서버 주소들 (rrN---sn-xxx.googlevideo.com 의 N·sn 을 바꿈)
+    static func alternateHosts(_ url: URL) -> [URL] {
+        guard let host = url.host, host.hasSuffix(".googlevideo.com"),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let dashes = host.range(of: "---") else { return [] }
+        let number = String(host[..<dashes.lowerBound].drop { !$0.isNumber })   // "rr4" → "4"
+        let current = String(host[dashes.upperBound...].prefix { $0 != "." })
+        let query = components.queryItems ?? []
+        let nodes = (query.first { $0.name == "mn" }?.value ?? "").split(separator: ",").map(String.init)
+        let fvips = (query.first { $0.name == "fvip" }?.value ?? "").split(separator: ",").map(String.init)
+        var hosts: [String] = []
+        for node in [current] + nodes.filter({ $0 != current }) {
+            for n in [number] + fvips where !n.isEmpty {
+                let candidate = "rr\(n)---\(node).googlevideo.com"
+                if candidate != host, !hosts.contains(candidate) { hosts.append(candidate) }
+            }
+        }
+        // 다른 노드를 먼저 (같은 노드의 다른 번호보다 빠른 경우가 많았다)
+        hosts.sort { !$0.contains(current) && $1.contains(current) }
+        return hosts.prefix(3).compactMap { alt in
+            var c = components
+            c.host = alt
+            return c.url
+        }
+    }
+
+    private actor Claim {
+        var taken = false
+        func take() -> Bool {
+            if taken { return false }
+            taken = true
+            return true
+        }
+    }
+
+    /// 원래 서버 → (1.2초마다) 보조 서버 순으로 요청을 걸고, 응답이 먼저 시작된 쪽에서 받는다
+    static func hedgedFetch(_ url: URL, range: String?) async -> (Data, HTTPURLResponse)? {
+        let urls = [url] + alternateHosts(url)
+        let claim = Claim()
+        return await withTaskGroup(of: (Data, HTTPURLResponse)?.self) { group in
+            for (index, target) in urls.enumerated() {
+                group.addTask {
+                    if index > 0 {
+                        try? await Task.sleep(for: .milliseconds(1200 * index))
+                        if Task.isCancelled { return nil }
+                        if await claim.taken { return nil }
+                    }
+                    var request = URLRequest(url: target)
+                    request.timeoutInterval = 12
+                    request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
+                    if let range { request.setValue(range, forHTTPHeaderField: "Range") }
+                    guard let (bytes, response) = try? await URLSession.shared.bytes(for: request),
+                          let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode)
+                    else { return nil }
+                    guard await claim.take() else { return nil }
+                    var body = Data()
+                    if http.expectedContentLength > 0 { body.reserveCapacity(Int(http.expectedContentLength)) }
+                    do {
+                        var buffer = [UInt8]()
+                        buffer.reserveCapacity(64 * 1024)
+                        for try await byte in bytes {
+                            buffer.append(byte)
+                            if buffer.count == 64 * 1024 {
+                                body.append(contentsOf: buffer)
+                                buffer.removeAll(keepingCapacity: true)
+                            }
+                        }
+                        body.append(contentsOf: buffer)
+                    } catch { return nil }
+                    return (body, http)
+                }
+            }
+            for await result in group {
+                if let result {
+                    group.cancelAll()
+                    return result
+                }
+            }
+            return nil
+        }
+    }
+
     // MARK: 재생목록 만들기 (마스터 안의 하위 목록은 상대 경로 → 포트가 바뀌어도 유효)
 
     /// 영상(여러 화질) + 오디오 그룹 마스터 재생목록. 반환값은 경로.
     func buildVideo(id: String, videos: [DashFormat], audio: DashFormat) async throws -> String {
-        async let audioPlaylist = Self.mediaPlaylist(audio)
+        async let audioPlaylist = mediaPlaylist(audio, id: id)
         var variants: [(DashFormat, String)] = []
         try await withThrowingTaskGroup(of: (Int, String)?.self) { group in
             for (index, format) in videos.enumerated() {
-                group.addTask { (try? await Self.mediaPlaylist(format)).map { (index, $0) } }
+                group.addTask { (try? await self.mediaPlaylist(format, id: id)).map { (index, $0) } }
             }
             var built: [(Int, String)] = []
             for try await result in group { if let result { built.append(result) } }
@@ -538,7 +661,7 @@ final class LocalHLS: @unchecked Sendable {
 
     /// 오디오만 있는 재생목록
     func buildAudio(id: String, audio: DashFormat) async throws -> String {
-        let playlist = try await Self.mediaPlaylist(audio)
+        let playlist = try await mediaPlaylist(audio, id: id)
         store("/\(id)/a.m3u8", playlist)
         let master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n"
             + "#EXT-X-STREAM-INF:BANDWIDTH=\(max(audio.bitrate, 64000)),CODECS=\"\(audio.codecs)\"\n"
@@ -548,17 +671,17 @@ final class LocalHLS: @unchecked Sendable {
     }
 
     /// sidx를 읽어서 바이트 범위 기반 fMP4 미디어 재생목록 생성
-    private static func mediaPlaylist(_ format: DashFormat) async throws -> String {
-        var request = URLRequest(url: format.url)
-        request.timeoutInterval = 8
-        request.setValue("bytes=\(format.indexRange.lowerBound)-\(format.indexRange.upperBound)", forHTTPHeaderField: "Range")
-        request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
-        let (data, _) = try await URLSession.shared.data(for: request)
-        let segments = try parseSidx([UInt8](data), anchor: format.indexRange.upperBound + 1)
+    /// 구간 주소는 로컬 서버 경로("s<itag>", 상대 경로)로 두고, 요청이 오면 앱이 대신 받아 넘긴다
+    private func mediaPlaylist(_ format: DashFormat, id: String) async throws -> String {
+        guard let (data, _) = await Self.hedgedFetch(
+            format.url, range: "bytes=\(format.indexRange.lowerBound)-\(format.indexRange.upperBound)")
+        else { throw AppError.noPlayableStream }
+        let segments = try Self.parseSidx([UInt8](data), anchor: format.indexRange.upperBound + 1)
         guard !segments.isEmpty else { throw AppError.noPlayableStream }
 
+        storeUpstream("/\(id)/s\(format.itag)", format.url)
         let target = Int((segments.map(\.duration).max() ?? 10).rounded(.up))
-        let url = format.url.absoluteString
+        let url = "s\(format.itag)"
         let initLength = format.initRange.upperBound - format.initRange.lowerBound + 1
         var lines = [
             "#EXTM3U",
