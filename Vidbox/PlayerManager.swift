@@ -52,6 +52,8 @@ final class PlayerManager: ObservableObject {
         didSet { UserDefaults.standard.set(miniPlayerEnabled, forKey: "miniPlayer") }
     }
     @Published private(set) var isFullscreen = false
+    /// 음악 플레이어에서 「동영상」을 고른 상태 — 음악 플레이어 화면 그대로 앨범아트 자리에 영상
+    @Published var musicVideoMode = false
     @Published var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? false {
         didSet { UserDefaults.standard.set(autoplay, forKey: "autoplay") }
     }
@@ -162,8 +164,10 @@ final class PlayerManager: ObservableObject {
         }
         if let audio {
             audioOnly = audio
+            if audio { musicVideoMode = false }
         } else if !continuingQueue {
             audioOnly = audioOnlyPreference
+            musicVideoMode = false
         }
 
         loadTask?.cancel()

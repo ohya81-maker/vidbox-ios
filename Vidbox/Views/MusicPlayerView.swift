@@ -71,7 +71,11 @@ struct MusicPlayerView: View {
                 VStack(spacing: 0) {
                     topBar
                     Spacer(minLength: 12)
-                    artwork(item)
+                    if player.audioOnly {
+                        artwork(item)
+                    } else {
+                        videoStage
+                    }
                     Spacer(minLength: 16)
                     titleRow(item)
                     actionRow(item)
@@ -194,32 +198,14 @@ struct MusicPlayerView: View {
         var spacing: CGFloat { switch self { case .regular: 10; case .compact: 8; default: 6 } }
     }
 
+    /// 폰 화면에 맞게 가사 · 저장 · 다음 트랙만 꺼내 두고, 다운로드 · 공유는 「…」 메뉴 안에
     private func actionPills(_ item: VideoItem, size: PillSize) -> some View {
         HStack(spacing: size.spacing) {
             pill("가사", icon: "quote.bubble", size: size) { showLyrics = true }
             pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
                  icon: library.isInAnyFolder(item) ? "checkmark" : "text.badge.plus", size: size) { showSave = true }
-            // 음원 다운로드 (인터넷 없이 듣기)
-            Button {
-                let downloads = DownloadManager.shared
-                if downloads.file(item.id, .audio) != nil {
-                    confirmDeleteDownload = true
-                } else if downloads.isDownloading(item.id, .audio) {
-                    downloads.cancel(item.id, .audio)
-                } else {
-                    downloads.start(item, kind: .audio)
-                }
-            } label: {
-                DownloadPillLabel(id: item.id, dark: true, font: size.font, iconSize: size.iconSize, showIcon: size.showIcon)
-                    .lineLimit(1)
-                    .padding(.horizontal, size.padding)
-                    .frame(height: size.height)
-                    .background(.white.opacity(0.12), in: Capsule())
-            }
-            ShareLink(item: item.shareURL) {
-                pillLabel("공유", icon: "arrowshape.turn.up.right", size: size)
-            }
             pill("다음 트랙", icon: "list.bullet", size: size) { showQueue = true }
+            MoreMenu(item: item, confirmDelete: $confirmDeleteDownload, size: size.height)
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -265,8 +251,14 @@ struct MusicPlayerView: View {
             Spacer()
             // 노래 / 동영상 전환
             HStack(spacing: 0) {
-                modeButton("노래", selected: true) {}
-                modeButton("동영상", selected: false) { player.setAudioOnly(false) }
+                modeButton("노래", selected: player.audioOnly) {
+                    player.musicVideoMode = false
+                    player.setAudioOnly(true)
+                }
+                modeButton("동영상", selected: !player.audioOnly) {
+                    player.musicVideoMode = true
+                    player.setAudioOnly(false)
+                }
             }
             .padding(3)
             .background(.white.opacity(0.12), in: Capsule())
@@ -305,6 +297,28 @@ struct MusicPlayerView: View {
             }
             // 화면이 작아도 아래 버튼들이 밀리지 않게 남는 높이만큼만
             .frame(maxWidth: .infinity)
+            .layoutPriority(-1)
+    }
+
+    /// 「동영상」 모드: 앨범아트 자리에 영상만 + 전체화면 버튼
+    private var videoStage: some View {
+        VideoSurface(manager: player)
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                if player.isLoading { ProgressView().tint(.white).controlSize(.large) }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Button { player.setFullscreen(true) } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(.black.opacity(0.5), in: Circle())
+                }
+                .padding(8)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(-1)
     }
 
@@ -453,6 +467,44 @@ private struct MusicProgressBar: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.white.opacity(0.7))
+        }
+    }
+}
+
+/// 음악 플레이어 「…」 메뉴: 음원 다운로드(진행률/삭제) · 공유
+private struct MoreMenu: View {
+    @ObservedObject private var downloads = DownloadManager.shared
+    let item: VideoItem
+    @Binding var confirmDelete: Bool
+    let size: CGFloat
+
+    var body: some View {
+        Menu {
+            if downloads.file(item.id, .audio) != nil {
+                Button(role: .destructive) { confirmDelete = true } label: {
+                    Label("다운로드한 음원 삭제", systemImage: "trash")
+                }
+            } else if let p = downloads.anyProgress(item.id), downloads.isDownloading(item.id, .audio) {
+                Button { downloads.cancel(item.id, .audio) } label: {
+                    Label("다운로드 취소 (\(Int(p * 100))%)", systemImage: "xmark.circle")
+                }
+            } else {
+                Button { downloads.start(item, kind: .audio) } label: {
+                    Label("음원 다운로드", systemImage: "arrow.down.circle")
+                }
+            }
+            ShareLink(item: item.shareURL) {
+                Label("공유", systemImage: "square.and.arrow.up")
+            }
+        } label: {
+            ZStack {
+                Circle().fill(.white.opacity(0.12))
+                if let p = downloads.anyProgress(item.id), downloads.isDownloading(item.id, .audio) {
+                    Circle().trim(from: 0, to: p).stroke(.white, lineWidth: 2).rotationEffect(.degrees(-90)).padding(2)
+                }
+                Image(systemName: "ellipsis").font(.system(size: 15, weight: .bold))
+            }
+            .frame(width: size, height: size)
         }
     }
 }

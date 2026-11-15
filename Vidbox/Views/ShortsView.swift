@@ -302,8 +302,10 @@ struct ShortPage: View {
         GeometryReader { geo in
             // 영상은 화면 높이의 약 80%: 위쪽 상태바 아래부터, 하단 탭바 위까지 가리지 않게.
             // 가로는 화면 폭 그대로, 세로 영상 비율(9:16)에 맞춰 높이를 정한다
-            let usable = geo.size.height - topInset - bottomInset - 8
+            // 하단 탭바(약 64pt)에 가리지 않게 빼고, 9:16 비율로 잘림 없이 맞춘다
+            let usable = geo.size.height - topInset - bottomInset - 64
             let boxHeight = min(geo.size.width * 16 / 9, geo.size.height * 0.8, usable)
+            let boxWidth = min(geo.size.width, boxHeight * 9 / 16)
             ZStack(alignment: .top) {
                 Color.black
                 ZStack {
@@ -324,7 +326,7 @@ struct ShortPage: View {
                         .clipped()
 
                     if isCurrent {
-                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspectFill)
+                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect)
                             .opacity(shorts.isReady ? 1 : 0)
                         if !shorts.isReady && !shorts.failed {
                             ProgressView().tint(.white)
@@ -345,9 +347,10 @@ struct ShortPage: View {
                     LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .center, endPoint: .bottom)
                         .allowsHitTesting(false)
                 }
-                .frame(width: geo.size.width, height: boxHeight)
+                .frame(width: boxWidth, height: boxHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.top, topInset + 4)
+                .frame(maxWidth: .infinity)
             }
         }
         .contentShape(Rectangle())

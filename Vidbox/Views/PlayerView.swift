@@ -21,7 +21,7 @@ struct PlayerView: View {
                         .ignoresSafeArea()
                         .statusBarHidden()
                         .persistentSystemOverlays(.hidden)
-                } else if player.isQueueMode && player.audioOnly {
+                } else if player.isQueueMode && (player.audioOnly || player.musicVideoMode) {
                     MusicPlayerView()
                 } else {
                     portrait

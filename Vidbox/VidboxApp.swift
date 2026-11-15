@@ -93,6 +93,11 @@ struct RootView: View {
             let item = VideoItem(id: id, title: "테스트 재생", channel: "KTUBE", channelThumbnail: nil, thumbnail: nil,
                                  duration: nil, views: nil, published: nil, isLive: false)
             player.play(item, queue: audio ? [item] : nil, audio: audio)
+            // 테스트: 음악 플레이어에서 「동영상」 (-ktubeMusicVideo YES)
+            if audio && defaults.bool(forKey: "ktubeMusicVideo") {
+                player.musicVideoMode = true
+                player.setAudioOnly(false)
+            }
             let seek = defaults.double(forKey: "ktubeSeek")
             if seek > 0 {
                 try? await Task.sleep(nanoseconds: 7_000_000_000)
