@@ -18,7 +18,13 @@ cd "$(dirname "$0")/.."
 if [ "${1:-}" != "--local" ]; then
   tag=$(gh release list -L 1 --json tagName -q '.[0].tagName')
   echo "최신 릴리스: $tag"
-  gh release download "$tag" -p "*.ipa" -O KTUBE.ipa --clobber
+  # 유료 계정 서명본이 있으면 그것을(Safari에서 바로 설치), 없으면 서명 안 된 IPA(SideStore용)
+  if gh release view "$tag" --json assets -q '.assets[].name' | grep -qx "KTUBE-signed.ipa"; then
+    gh release download "$tag" -p "KTUBE-signed.ipa" -O KTUBE.ipa --clobber
+    echo "서명된 IPA 사용"
+  else
+    gh release download "$tag" -p "*.ipa" -O KTUBE.ipa --clobber
+  fi
 fi
 
 rm -rf dist/ktube
