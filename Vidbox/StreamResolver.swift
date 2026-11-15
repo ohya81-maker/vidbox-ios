@@ -171,7 +171,8 @@ actor StreamResolver {
         let allAudio = formats.filter { $0.isAudio }
         let notDubbed = allAudio.filter { !$0.isAutoDubbed }
         let originals = notDubbed.filter { $0.isDefaultAudio }
-        let pool = !originals.isEmpty ? originals : (!notDubbed.isEmpty ? notDubbed : allAudio)
+        let pool0 = !originals.isEmpty ? originals : (!notDubbed.isEmpty ? notDubbed : allAudio)
+        let pool = pool0.contains { !$0.isDrc } ? pool0.filter { !$0.isDrc } : pool0
         let audioFormat = pool.first { $0.itag == 140 } ?? pool.max { $0.bitrate < $1.bitrate }
         // 화질 후보: 720p 먼저(빠른 시작), 그다음 1080p / 480p 로 자동 전환
         // 쇼츠 같은 세로 영상은 720p가 720x1280이므로 "짧은 변" 기준으로 고른다
@@ -367,6 +368,8 @@ struct DashFormat: Sendable {
     /// 여러 언어 오디오가 있을 때: 원본(기본) 트랙인지 / YouTube 자동 더빙인지
     let isDefaultAudio: Bool
     let isAutoDubbed: Bool
+    /// 음량 압축(DRC) 버전 — 같은 원본이 보통판과 DRC판 두 개로 올 때 보통판을 쓴다
+    let isDrc: Bool
 
     var isAudio: Bool { mime.hasPrefix("audio/mp4") }
     var isVideo: Bool { mime.hasPrefix("video/mp4") }
@@ -396,6 +399,7 @@ struct DashFormat: Sendable {
         let track = d["audioTrack"] as? [String: Any]
         self.isDefaultAudio = track == nil || (track?["audioIsDefault"] as? Bool ?? false)
         self.isAutoDubbed = track?["isAutoDubbed"] as? Bool ?? false
+        self.isDrc = d["isDrc"] as? Bool ?? false
     }
 
     private static func range(_ any: Any?) -> ClosedRange<Int>? {

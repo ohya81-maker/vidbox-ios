@@ -119,46 +119,87 @@ final class ShortsPlayer: ObservableObject {
         armWatchdog(for: item.id)
     }
 
+    /// 지금 쇼츠의 재생 후보 (자체 HLS → YouTube HLS → 분리 파일 → 360p 합본) 와 시도 중인 순번
+    private var candidates: [PlaybackSource] = []
+    private var candidateIndex = 0
+
     private func load(_ id: String) {
         task?.cancel()
+        candidates = []
+        candidateIndex = 0
         task = Task { [weak self] in
-            do {
-                // 미리 만들어 둔 항목(재생목록까지 받아 둠)이 있으면 그것을, 없으면 새로
-                let ready = self?.warmed.removeValue(forKey: id)
-                let playerItem: AVPlayerItem
-                if let ready { playerItem = ready } else { playerItem = try await PlayerManager.loadItem(id: id, audioOnly: false) }
+            // 미리 만들어 둔 항목(재생목록까지 받아 둠)이 있으면 그것부터
+            if let ready = self?.warmed.removeValue(forKey: id) {
                 guard !Task.isCancelled, let self, self.currentID == id else { return }
-                Self.tuneForQuickStart(playerItem)
-                // HLS도 반복되도록 끝나면 처음으로 되감기
-                if let old = self.endObserver { NotificationCenter.default.removeObserver(old) }
-                self.endObserver = NotificationCenter.default.addObserver(
-                    forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main
-                ) { [weak self] _ in
-                    MainActor.assumeIsolated {
-                        self?.player.seek(to: .zero)
-                        self?.player.play()
-                    }
-                }
-                self.player.replaceCurrentItem(with: playerItem)
-                if !self.isPaused { self.player.play() }
-            } catch {
+                self.attach(ready)
+                return
+            }
+            guard let list = try? await StreamResolver.shared.candidates(id: id, audioOnly: false) else {
                 guard !Task.isCancelled, let self, self.currentID == id else { return }
                 self.failed = true
+                return
             }
+            guard !Task.isCancelled, let self, self.currentID == id else { return }
+            self.candidates = list
+            await self.tryCandidate(from: 0, id: id)
         }
     }
 
-    /// 8초 안에 재생이 시작되지 않으면 한 번 새로 받아 보고, 그래도 안 되면 실패 표시
+    /// index번째 후보부터 재생 항목을 만들어 붙인다 (만들기에 실패하면 다음 후보)
+    private func tryCandidate(from index: Int, id: String) async {
+        var i = index
+        while i < candidates.count {
+            if let item = try? await StreamResolver.makeItem(candidates[i]) {
+                guard currentID == id else { return }
+                candidateIndex = i
+                attach(item)
+                return
+            }
+            i += 1
+        }
+        guard currentID == id else { return }
+        failed = true
+    }
+
+    private func attach(_ playerItem: AVPlayerItem) {
+        Self.tuneForQuickStart(playerItem)
+        // HLS도 반복되도록 끝나면 처음으로 되감기
+        if let old = endObserver { NotificationCenter.default.removeObserver(old) }
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.player.seek(to: .zero)
+                self?.player.play()
+            }
+        }
+        player.replaceCurrentItem(with: playerItem)
+        if !isPaused { player.play() }
+    }
+
+    /// 재생이 시작되지 않으면(서버 일시 오류·멈춘 스트림 등) 같은 주소를 다시 기다리지 않고
+    /// 5초마다 다음 재생 방식으로 바꾼다. 모두 안 되면 실패 표시
     private func armWatchdog(for id: String) {
         watchdog?.cancel()
         watchdog = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(8))
-            guard !Task.isCancelled, let self, self.currentID == id, !self.isReady, !self.isPaused, !self.failed else { return }
-            self.player.replaceCurrentItem(with: nil)
-            self.load(id)
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled, self.currentID == id, !self.isReady, !self.isPaused else { return }
-            self.failed = true
+            for _ in 0..<5 {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled, let self, self.currentID == id else { return }
+                if self.isReady || self.isPaused || self.failed { return }
+                self.player.replaceCurrentItem(with: nil)
+                if self.candidates.isEmpty {
+                    // 미리 만든 항목이 멈췄거나 후보를 아직 못 받음 → 후보 목록을 받아 두 번째부터
+                    guard let list = try? await StreamResolver.shared.candidates(id: id, audioOnly: false),
+                          self.currentID == id else { continue }
+                    self.candidates = list
+                    await self.tryCandidate(from: min(1, list.count - 1), id: id)
+                } else if self.candidateIndex + 1 < self.candidates.count {
+                    await self.tryCandidate(from: self.candidateIndex + 1, id: id)
+                } else {
+                    self.failed = true
+                    return
+                }
+            }
         }
     }
 
