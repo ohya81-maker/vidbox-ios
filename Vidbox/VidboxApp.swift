@@ -32,36 +32,34 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $tab) {
             Tab(value: AppTab.home) {
-                HomeView().miniPlayerInset().tint(.primary)
+                HomeView().miniPlayerInset()
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("홈") } icon: { Image(uiImage: UIImage(systemName: tab == .home ? "house.fill" : "house")!) }
             }
             Tab(value: AppTab.shorts) {
-                ShortsView(isActive: tab == .shorts).tint(.primary)
+                ShortsView(isActive: tab == .shorts)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("Shorts") } icon: { Image(uiImage: UIImage(systemName: tab == .shorts ? "play.rectangle.on.rectangle.fill" : "play.rectangle.on.rectangle")!) }
             }
             Tab(value: AppTab.music) {
-                MusicView().miniPlayerInset().tint(.primary)
+                MusicView().miniPlayerInset()
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("음악") } icon: { Image(uiImage: UIImage(systemName: tab == .music ? "headphones.circle.fill" : "headphones.circle")!) }
             }
             Tab(value: AppTab.kids) {
-                KidsView().miniPlayerInset().tint(.primary)
+                KidsView().miniPlayerInset()
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("KIDS") } icon: { Image(uiImage: UIImage(systemName: tab == .kids ? "face.smiling.inverse" : "face.smiling")!) }
             }
             Tab(value: AppTab.search, role: .search) {
-                SearchView(text: $searchText, query: $searchQuery).miniPlayerInset().tint(.primary)
+                SearchView(text: $searchText, query: $searchQuery).miniPlayerInset()
             }
         }
-        // 선택된 탭은 브랜드 빨강: 밝은 화면(음악)·검은 화면(쇼츠) 위 유리 탭바 어디서나 잘 보이게.
-        // (.primary는 라이트 모드에서 검정이라 쇼츠의 어두운 탭바에서 선택 탭이 안 보였다)
-        .tint(Color(red: 0.88, green: 0.15, blue: 0.17))
+        // 선택 탭은 기본 유리 탭바 그대로(빨강 없이 .primary): 선택 표시는 유리 캡슐 + 채운 아이콘
         // iOS 26: 검색 탭을 누르면 하단 탭이 왼쪽으로 접히고 그 자리에 검색창이 나온다
         .searchable(text: $searchText, prompt: "동영상, 채널, 음악 검색")
         .onSubmit(of: .search) {
