@@ -99,10 +99,6 @@ struct PlayerView: View {
                      icon: library.isInAnyFolder(item) ? "checkmark.circle.fill" : "plus.circle") {
                     showSave = true
                 }
-                pill("오디오 전용", icon: player.audioOnly ? "headphones.circle.fill" : "headphones",
-                     isOn: player.audioOnly) {
-                    player.setAudioOnly(!player.audioOnly)
-                }
                 pill("자동재생", icon: "infinity", isOn: player.autoplay) {
                     player.autoplay.toggle()
                 }
