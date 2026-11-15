@@ -32,21 +32,24 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $tab) {
             Tab("홈", systemImage: "house.fill", value: AppTab.home) {
-                HomeView().miniPlayerInset()
+                HomeView().miniPlayerInset().tint(.primary)
             }
             Tab("Shorts", systemImage: "play.rectangle.on.rectangle.fill", value: AppTab.shorts) {
-                ShortsView(isActive: tab == .shorts)
+                ShortsView(isActive: tab == .shorts).tint(.primary)
             }
             Tab("음악", systemImage: "music.note", value: AppTab.music) {
-                MusicView().miniPlayerInset()
+                MusicView().miniPlayerInset().tint(.primary)
             }
             Tab("KIDS", systemImage: "face.smiling.inverse", value: AppTab.kids) {
-                KidsView().miniPlayerInset()
+                KidsView().miniPlayerInset().tint(.primary)
             }
             Tab(value: AppTab.search, role: .search) {
-                SearchView(text: $searchText, query: $searchQuery).miniPlayerInset()
+                SearchView(text: $searchText, query: $searchQuery).miniPlayerInset().tint(.primary)
             }
         }
+        // 선택된 탭은 브랜드 빨강: 밝은 화면(음악)·검은 화면(쇼츠) 위 유리 탭바 어디서나 잘 보이게.
+        // (.primary는 라이트 모드에서 검정이라 쇼츠의 어두운 탭바에서 선택 탭이 안 보였다)
+        .tint(Color(red: 0.88, green: 0.15, blue: 0.17))
         // iOS 26: 검색 탭을 누르면 하단 탭이 왼쪽으로 접히고 그 자리에 검색창이 나온다
         .searchable(text: $searchText, prompt: "동영상, 채널, 음악 검색")
         .onSubmit(of: .search) {
