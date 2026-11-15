@@ -186,19 +186,21 @@ actor StreamResolver {
         // 오디오 후보: 자체 HLS 먼저 → m4a 파일 직접
         // (m4a를 직접 재생하면 아이폰이 길이를 실제의 2배로 계산하는 문제가 있어 뒤로 미룸)
         // m4a 직접 재생은 길이가 2배로 나오므로, 자체 HLS를 한 번 더 시도하고 YouTube HLS를 그다음에 둔다
+        // 오디오 재생목록 · 영상 재생목록 · "앞부분만 허용" 검사를 동시에 진행 (차례로 하면 시작이 늦어진다)
+        async let audioPathTask = Self.audioPath(id: id, audio: audioFormat)
+        async let videoPathTask = Self.videoPath(id: id, videos: videoFormats, audio: audioFormat)
+        async let gatedTask = Self.probeGated(audioFormat ?? videoFormats.first)
+
         var audio: [PlaybackSource] = []
         if let audioFormat {
-            var path = try? await LocalHLS.shared.buildAudio(id: id, audio: audioFormat)
-            if path == nil { path = try? await LocalHLS.shared.buildAudio(id: id, audio: audioFormat) }
-            if let path { audio.append(.local(path)) }
+            if let path = await audioPathTask { audio.append(.local(path)) }
             if let youtubeHLS { audio.append(.single(youtubeHLS)) }
             audio.append(.single(audioFormat.url))
         }
 
         // 영상 후보: 자체 HLS(가장 빠름) → YouTube HLS → 분리 파일 합치기 → 360p 단일 파일
         var video: [PlaybackSource] = []
-        if let audioFormat, !videoFormats.isEmpty,
-           let path = try? await LocalHLS.shared.buildVideo(id: id, videos: videoFormats, audio: audioFormat) {
+        if let path = await videoPathTask {
             video.append(.local(path))
         }
         if let youtubeHLS { video.append(.single(youtubeHLS)) }
@@ -210,8 +212,7 @@ actor StreamResolver {
         // 안전장치: 그래도 고화질 파일이 앞부분만 허용되면(뒤쪽 1KB 요청이 403)
         // 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
         var gatedMuxed: URL?
-        if let probe = audioFormat ?? videoFormats.first, await isGated(probe),
-           let full = try? await fetchAndroidMuxed(id: id) {
+        if await gatedTask, let full = try? await fetchAndroidMuxed(id: id) {
             video.insert(.limited(full), at: 0)
             audio.insert(.limited(full), at: 0)
             gatedMuxed = full
@@ -221,6 +222,22 @@ actor StreamResolver {
         let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
         return Entry(video: video, audio: audio, date: Date(), length: length,
                      downloadVideo: videoFormats.first, downloadAudio: audioFormat, downloadMuxed: gatedMuxed)
+    }
+
+    private static func audioPath(id: String, audio: DashFormat?) async -> String? {
+        guard let audio else { return nil }
+        if let p = try? await LocalHLS.shared.buildAudio(id: id, audio: audio) { return p }
+        return try? await LocalHLS.shared.buildAudio(id: id, audio: audio)
+    }
+
+    private static func videoPath(id: String, videos: [DashFormat], audio: DashFormat?) async -> String? {
+        guard let audio, !videos.isEmpty else { return nil }
+        return try? await LocalHLS.shared.buildVideo(id: id, videos: videos, audio: audio)
+    }
+
+    private static func probeGated(_ format: DashFormat?) async -> Bool {
+        guard let format else { return false }
+        return await isGated(format)
     }
 
     /// 파일 뒤쪽(85%)을 1KB만 요청해서 403이면 "앞부분만 허용"된 영상

@@ -8,6 +8,12 @@ import UIKit
 ///   + 백그라운드 진입 시 AVPlayerLayer에서 플레이어를 떼어내어 영상 트랙 때문에 멈추지 않게 함
 /// - 잠금화면/제어센터: MPNowPlayingInfoCenter + MPRemoteCommandCenter
 /// - 재생목록(queue): 음악 탭처럼 목록을 넘겨주면 그 순서대로, 없으면 추천 영상 순서로 다음 곡 재생
+/// 재생 위치만 알려주는 작은 객체 (재생 막대·시간 표시만 지켜본다)
+@MainActor
+final class PlaybackClock: ObservableObject {
+    @Published var time: Double = 0
+}
+
 @MainActor
 final class PlayerManager: ObservableObject {
     static let shared = PlayerManager()
@@ -16,7 +22,13 @@ final class PlayerManager: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
-    @Published private(set) var currentTime: Double = 0
+    /// 재생 위치는 0.5초마다 바뀌므로 따로 둔다 — 여기(PlayerManager)에 두면 이것을 지켜보는
+    /// 모든 화면(탭 전체, 영상 카드들)이 0.5초마다 다시 그려져 스크롤·버튼이 버벅인다
+    let clock = PlaybackClock()
+    private(set) var currentTime: Double {
+        get { clock.time }
+        set { clock.time = newValue }
+    }
     @Published private(set) var duration: Double = 0
     @Published private(set) var related: [VideoItem] = []
     @Published private(set) var queue: [VideoItem] = []
@@ -33,11 +45,14 @@ final class PlayerManager: ObservableObject {
         }
     }
     /// 재생 화면을 내렸을 때 하단 재생 막대로 계속 재생할지 (보관함 설정, 기본 꺼짐)
-    @Published var miniPlayerEnabled: Bool = UserDefaults.standard.bool(forKey: "miniPlayer") {
+    @Published var miniPlayerEnabled: Bool = {
+        PlayerManager.applyDefaultsOnce()
+        return UserDefaults.standard.bool(forKey: "miniPlayer")
+    }() {
         didSet { UserDefaults.standard.set(miniPlayerEnabled, forKey: "miniPlayer") }
     }
     @Published private(set) var isFullscreen = false
-    @Published var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? true {
+    @Published var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? false {
         didSet { UserDefaults.standard.set(autoplay, forKey: "autoplay") }
     }
     /// 새 영상을 열 때 기본으로 오디오 전용으로 재생할지 (보관함 설정)
@@ -46,6 +61,16 @@ final class PlayerManager: ObservableObject {
     }
 
     let player = AVPlayer()
+
+    /// 기본 설정 (설치·업데이트 후 한 번): 화면 내려도 하단 재생 막대로 계속 재생 켬, 다음 동영상 자동재생 끔.
+    /// 그 뒤 사용자가 바꾼 값은 그대로 둔다.
+    nonisolated static func applyDefaultsOnce() {
+        let d = UserDefaults.standard
+        guard d.integer(forKey: "defaultsVersion") < 2 else { return }
+        d.set(true, forKey: "miniPlayer")
+        d.set(false, forKey: "autoplay")
+        d.set(2, forKey: "defaultsVersion")
+    }
 
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?

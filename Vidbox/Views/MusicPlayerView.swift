@@ -292,22 +292,7 @@ struct MusicPlayerView: View {
         }
     }
 
-    private var progress: some View {
-        VStack(spacing: 4) {
-            Scrubber(current: player.currentTime, duration: player.duration) { time in
-                scrubTime = time
-            } onCommit: { time in
-                player.seek(to: time)
-            }
-            HStack {
-                Text(formatTime(scrubTime ?? player.currentTime))
-                Spacer()
-                Text(formatTime(player.duration))
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.7))
-        }
-    }
+    private var progress: some View { MusicProgressBar() }
 
     // MARK: 무작위 · 이전 · 재생 · 다음 · 반복
 
@@ -414,5 +399,29 @@ struct MusicPlayerView: View {
         case .one: parts.append("한 곡 반복")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// 음악 재생 막대 — 재생 위치(0.5초마다)를 이 작은 화면만 지켜본다
+private struct MusicProgressBar: View {
+    @EnvironmentObject private var player: PlayerManager
+    @ObservedObject private var clock = PlayerManager.shared.clock
+    @State private var scrubTime: Double?
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Scrubber(current: clock.time, duration: player.duration) { time in
+                scrubTime = time
+            } onCommit: { time in
+                player.seek(to: time)
+            }
+            HStack {
+                Text(formatTime(scrubTime ?? clock.time))
+                Spacer()
+                Text(formatTime(player.duration))
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.7))
+        }
     }
 }

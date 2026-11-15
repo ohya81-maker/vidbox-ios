@@ -88,7 +88,8 @@ struct AvatarView: View {
 
 struct VideoCard: View {
     let item: VideoItem
-    @EnvironmentObject private var player: PlayerManager
+    /// 재생기를 "지켜보지" 않는다 — 재생 상태가 바뀔 때마다 피드의 카드가 전부 다시 그려지지 않도록
+    private var player: PlayerManager { PlayerManager.shared }
 
     var body: some View {
         Button {

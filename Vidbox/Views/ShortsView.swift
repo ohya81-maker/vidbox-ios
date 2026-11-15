@@ -64,10 +64,13 @@ final class ShortsFeed: ObservableObject {
 }
 
 // MARK: - 쇼츠 전용 플레이어 (반복 재생)
+//
+// 다음 쇼츠 2개는 대기용 플레이어에 미리 넣어 두어 앞부분을 받아 둔다.
+// 넘기면 대기 플레이어를 그대로 화면에 붙이므로 바로 재생된다.
 
 @MainActor
 final class ShortsPlayer: ObservableObject {
-    let player = AVPlayer()
+    @Published private(set) var player = AVPlayer()
     @Published private(set) var isReady = false
     @Published private(set) var isPaused = false
     @Published private(set) var failed = false
@@ -76,12 +79,44 @@ final class ShortsPlayer: ObservableObject {
     private var task: Task<Void, Never>?
     private var statusObservation: NSKeyValueObservation?
 
+    /// 미리 준비한 플레이어 (영상 ID → 플레이어)
+    private var standby: [String: AVPlayer] = [:]
+    private var preparing: [String: Task<Void, Never>] = [:]
+
     init() {
-        player.automaticallyWaitsToMinimizeStalling = true
-        statusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
+        attach(player)
+    }
+
+    private static func makePlayer(_ item: AVPlayerItem? = nil) -> AVPlayer {
+        let p = AVPlayer(playerItem: item)
+        p.automaticallyWaitsToMinimizeStalling = true
+        return p
+    }
+
+    /// 화면에 붙일 플레이어 교체 + 상태 관찰
+    private func attach(_ p: AVPlayer) {
+        player = p
+        statusObservation = p.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] observed, _ in
             let playing = observed.timeControlStatus == .playing
             Task { @MainActor in
-                if playing { self?.isReady = true }
+                guard let self, self.player === observed else { return }
+                if playing { self.isReady = true }
+            }
+        }
+        loop(p.currentItem)
+    }
+
+    /// 끝나면 처음으로 되감아 반복
+    private func loop(_ item: AVPlayerItem?) {
+        if let old = endObserver { NotificationCenter.default.removeObserver(old) }
+        endObserver = nil
+        guard let item else { return }
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.player.seek(to: .zero)
+                self?.player.play()
             }
         }
     }
@@ -92,29 +127,40 @@ final class ShortsPlayer: ObservableObject {
             return
         }
         currentID = item.id
-        isReady = false
         isPaused = false
         failed = false
         task?.cancel()
         player.pause()
-        player.replaceCurrentItem(with: nil)
+        PlayerManager.shared.activateAudioSession()
 
+        // 미리 준비해 둔 플레이어가 있으면 바로 교체
+        if let ready = standby.removeValue(forKey: item.id) {
+            isReady = false
+            attach(ready)
+            ready.seek(to: .zero)
+            ready.play()
+            return
+        }
+        // 준비 중이면 끝나기를 기다렸다가, 아니면 새로 만든다
+        isReady = false
+        let fresh = Self.makePlayer()
+        attach(fresh)
+        let pending = preparing[item.id]
         task = Task { [weak self] in
+            if let pending {
+                await pending.value
+                guard !Task.isCancelled, let self, self.currentID == item.id else { return }
+                if let ready = self.standby.removeValue(forKey: item.id) {
+                    self.attach(ready)
+                    ready.play()
+                    return
+                }
+            }
             do {
                 let playerItem = try await PlayerManager.loadItem(id: item.id, audioOnly: false)
                 guard !Task.isCancelled, let self, self.currentID == item.id else { return }
-                // HLS도 반복되도록 끝나면 처음으로 되감기
-                if let old = self.endObserver { NotificationCenter.default.removeObserver(old) }
-                self.endObserver = NotificationCenter.default.addObserver(
-                    forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main
-                ) { [weak self] _ in
-                    MainActor.assumeIsolated {
-                        self?.player.seek(to: .zero)
-                        self?.player.play()
-                    }
-                }
                 self.player.replaceCurrentItem(with: playerItem)
-                PlayerManager.shared.activateAudioSession()
+                self.loop(playerItem)
                 self.player.play()
             } catch {
                 guard !Task.isCancelled, let self, self.currentID == item.id else { return }
@@ -138,9 +184,29 @@ final class ShortsPlayer: ObservableObject {
         player.pause()
     }
 
+    /// 다음 쇼츠들을 대기 플레이어에 미리 넣어 앞부분을 받아 둔다 (그 밖의 대기 플레이어는 정리)
     func prefetch(_ items: [VideoItem]) {
-        let ids = items.map(\.id)
-        Task { await StreamResolver.shared.prefetch(ids) }
+        let keep = Set(items.map(\.id))
+        for (id, p) in standby where !keep.contains(id) {
+            p.replaceCurrentItem(with: nil)
+            standby[id] = nil
+        }
+        for (id, t) in preparing where !keep.contains(id) {
+            t.cancel()
+            preparing[id] = nil
+        }
+        for item in items where standby[item.id] == nil && preparing[item.id] == nil && item.id != currentID {
+            let id = item.id
+            preparing[id] = Task { [weak self] in
+                guard let playerItem = try? await PlayerManager.loadItem(id: id, audioOnly: false),
+                      !Task.isCancelled, let self else { self?.preparing[id] = nil; return }
+                let p = Self.makePlayer(playerItem)
+                p.isMuted = false
+                p.pause()               // 재생하지 않고 앞부분만 받아 둔다
+                self.standby[id] = p
+                self.preparing[id] = nil
+            }
+        }
     }
 }
 
@@ -158,11 +224,13 @@ struct ShortsView: View {
         // 페이지 높이와 넘김 단위가 정확히 같게 (다음 영상이 아래에 걸쳐 보이지 않게)
         GeometryReader { outer in
         let bottomInset = outer.safeAreaInsets.bottom
+        let topInset = outer.safeAreaInsets.top
         GeometryReader { geo in
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
                     ForEach(feed.items) { item in
-                        ShortPage(item: item, isCurrent: item.id == currentID, shorts: shorts, bottomInset: bottomInset)
+                        ShortPage(item: item, isCurrent: item.id == currentID, shorts: shorts,
+                                  topInset: topInset, bottomInset: bottomInset)
                             .frame(width: geo.size.width, height: geo.size.height)
                             .id(item.id)
                             .onAppear {
@@ -224,53 +292,63 @@ struct ShortPage: View {
     let item: VideoItem
     let isCurrent: Bool
     @ObservedObject var shorts: ShortsPlayer
+    var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
     @State private var showSave = false
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerManager
 
     var body: some View {
-        ZStack {
-            // 썸네일은 레이아웃을 밀어내지 않도록 검은 배경의 overlay로, 세로(9:16) 썸네일을 원본 비율 그대로
-            Color.black
-                .overlay {
-                    AsyncImage(url: URL(string: "https://i.ytimg.com/vi/\(item.id)/oar2.jpg")) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFill()
-                        } else if phase.error != nil {
-                            AsyncImage(url: item.bestThumbnail) { image in
-                                image.resizable().scaledToFill()
-                            } placeholder: { Color.black }
-                        } else {
-                            Color.black
+        GeometryReader { geo in
+            // 영상은 화면 높이의 약 80%: 위쪽 상태바 아래부터, 하단 탭바 위까지 가리지 않게.
+            // 가로는 화면 폭 그대로, 세로 영상 비율(9:16)에 맞춰 높이를 정한다
+            let usable = geo.size.height - topInset - bottomInset - 8
+            let boxHeight = min(geo.size.width * 16 / 9, geo.size.height * 0.8, usable)
+            ZStack(alignment: .top) {
+                Color.black
+                ZStack {
+                    Color.black
+                        .overlay {
+                            AsyncImage(url: URL(string: "https://i.ytimg.com/vi/\(item.id)/oar2.jpg")) { phase in
+                                if let image = phase.image {
+                                    image.resizable().scaledToFill()
+                                } else if phase.error != nil {
+                                    AsyncImage(url: item.bestThumbnail) { image in
+                                        image.resizable().scaledToFill()
+                                    } placeholder: { Color.black }
+                                } else {
+                                    Color.black
+                                }
+                            }
+                        }
+                        .clipped()
+
+                    if isCurrent {
+                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspectFill)
+                            .opacity(shorts.isReady ? 1 : 0)
+                        if !shorts.isReady && !shorts.failed {
+                            ProgressView().tint(.white)
+                        }
+                        if shorts.failed {
+                            Label("재생할 수 없는 쇼츠입니다", systemImage: "exclamationmark.circle")
+                                .foregroundStyle(.white)
+                        }
+                        if shorts.isPaused {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 54))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .shadow(color: .black.opacity(0.5), radius: 6)
+                                .allowsHitTesting(false)
                         }
                     }
-                }
-                .clipped()
 
-            if isCurrent {
-                // 영상도 원본 비율 그대로 (잘라서 확대하지 않음)
-                // 화면 끝까지 꽉 채움 (YouTube 쇼츠와 같은 방식, 좌우가 살짝 잘림)
-                VideoSurface(avPlayer: shorts.player, gravity: .resizeAspectFill)
-                    .opacity(shorts.isReady ? 1 : 0)
-                if !shorts.isReady && !shorts.failed {
-                    ProgressView().tint(.white)
-                }
-                if shorts.failed {
-                    Label("재생할 수 없는 쇼츠입니다", systemImage: "exclamationmark.circle")
-                        .foregroundStyle(.white)
-                }
-                if shorts.isPaused {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 54))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .shadow(color: .black.opacity(0.5), radius: 6)
+                    LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .center, endPoint: .bottom)
                         .allowsHitTesting(false)
                 }
+                .frame(width: geo.size.width, height: boxHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.top, topInset + 4)
             }
-
-            LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .center, endPoint: .bottom)
-                .allowsHitTesting(false)
         }
         .contentShape(Rectangle())
         .onTapGesture { if isCurrent { shorts.togglePause() } }

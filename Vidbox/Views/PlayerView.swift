@@ -176,6 +176,7 @@ struct PlayerView: View {
 struct PlayerStage: View {
     let fullscreen: Bool
     @EnvironmentObject private var player: PlayerManager
+    @ObservedObject private var clock = PlayerManager.shared.clock
     @State private var showControls = true
     @State private var scrubTime: Double?
     @State private var hideTask: Task<Void, Never>?
@@ -583,6 +584,7 @@ private struct ScrubberSlider: UIViewRepresentable {
 
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlayerManager
+    @ObservedObject private var clock = PlayerManager.shared.clock
 
     var body: some View {
         if let item = player.current {
