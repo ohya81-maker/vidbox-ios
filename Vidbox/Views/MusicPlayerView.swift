@@ -1,5 +1,55 @@
 import SwiftUI
 
+/// 지금 노래의 가사 (YouTube Music에 등록된 가사). 다음 곡으로 넘어가면 그 곡 가사로 바뀐다
+struct LyricsSheet: View {
+    @EnvironmentObject private var player: PlayerManager
+    @State private var lyrics: (text: String, source: String?)?
+    @State private var loading = true
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let item = player.current {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title).font(.headline).lineLimit(2)
+                        Text(item.channel).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    }
+                }
+                if loading {
+                    ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 40)
+                } else if let lyrics {
+                    Text(lyrics.text)
+                        .font(.system(size: 21, weight: .bold))
+                        .lineSpacing(8)
+                        .textSelection(.enabled)
+                    if let source = lyrics.source {
+                        Text(source).font(.caption).foregroundStyle(.white.opacity(0.5))
+                    }
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "quote.bubble").font(.system(size: 34))
+                        Text("이 노래는 가사가 없어요").font(.headline)
+                        Text("YouTube Music에 가사가 등록된 노래만 볼 수 있어요")
+                            .font(.footnote)
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 24)
+        }
+        .foregroundStyle(.white)
+        .task(id: player.current?.id) {
+            guard let id = player.current?.id else { return }
+            loading = true
+            lyrics = await InnerTubeClient.shared.lyrics(videoID: id)
+            loading = false
+        }
+    }
+}
+
 /// YouTube Music 스타일 음악 플레이어 (음악 탭에서 재생할 때)
 struct MusicPlayerView: View {
     @EnvironmentObject private var player: PlayerManager
@@ -53,6 +103,13 @@ struct MusicPlayerView: View {
         .sheet(isPresented: $showSave) {
             if let item = player.current { SaveToFolderSheet(item: item, music: true) }
         }
+        .sheet(isPresented: $showLyrics) {
+            LyricsSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.black.opacity(0.85))
+                .environment(\.colorScheme, .dark)
+        }
         .sheet(isPresented: $showQueue) {
             ScrollView {
                 queueList
@@ -69,6 +126,7 @@ struct MusicPlayerView: View {
     }
 
     @State private var showQueue = false
+    @State private var showLyrics = false
 
     /// 맨 아래 손잡이 — 누르거나 위로 밀면 다음 트랙 목록
     private var upNextHandle: some View {
@@ -101,6 +159,7 @@ struct MusicPlayerView: View {
     private func actionRow(_ item: VideoItem) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
+                pill("가사", icon: "quote.bubble") { showLyrics = true }
                 pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
                      icon: library.isInAnyFolder(item) ? "checkmark" : "text.badge.plus") { showSave = true }
                 ShareLink(item: item.shareURL) {

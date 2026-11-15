@@ -215,6 +215,32 @@ final class InnerTubeClient {
         return songs + extra
     }
 
+    /// YouTube Music 가사 (가사가 등록된 노래만). 본문과 출처(예: "출처: LyricFind")
+    func lyrics(videoID: String) async -> (text: String, source: String?)? {
+        guard let next = try? await post("next", body: ["videoId": videoID], music: true) else { return nil }
+        var browseID: String?
+        Self.walk(next) { key, value in
+            if browseID == nil, key == "browseId", let id = value as? String, id.hasPrefix("MPLY") { browseID = id }
+        }
+        guard let browseID, let json = try? await post("browse", body: ["browseId": browseID], music: true) else { return nil }
+        var text: String?
+        var source: String?
+        Self.walk(json) { key, value in
+            guard key == "musicDescriptionShelfRenderer", let d = value as? [String: Any] else { return }
+            text = Self.runsText(d["description"])
+            source = Self.runsText(d["footer"])
+        }
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return (text, source)
+    }
+
+    private static func runsText(_ node: Any?) -> String? {
+        if let runs = dig(node, "runs") as? [[String: Any]] {
+            return runs.compactMap { $0["text"] as? String }.joined()
+        }
+        return text(node)
+    }
+
     /// YouTube Music 「라디오」 — 이 노래와 비슷한 곡들 (YouTube Music 추천 알고리즘)
     func musicRadio(seed videoID: String) async -> [VideoItem] {
         guard let json = try? await post("next", body: ["videoId": videoID, "playlistId": "RDAMVM" + videoID], music: true)
