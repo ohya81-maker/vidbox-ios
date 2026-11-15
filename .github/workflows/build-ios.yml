@@ -65,12 +65,14 @@ jobs:
         with:
           name: build-log
           path: build.log
+          retention-days: 3
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: Vidbox-ipa
           path: Vidbox.ipa
+          retention-days: 3
 
       # ── 유료 개발자 계정 Ad Hoc 서명 (시크릿이 등록돼 있을 때만) ──────────────
       # 필요한 저장소 시크릿: IOS_P12_BASE64, IOS_P12_PASSWORD, IOS_PROFILE_BASE64
@@ -133,6 +135,7 @@ jobs:
         with:
           name: ktube-site
           path: site-out/youtube/
+          retention-days: 3
 
       - name: Upload to Synology (WebDAV)
         if: steps.sign.outputs.signed == 'true'
@@ -184,6 +187,7 @@ jobs:
         with:
           name: screenshots
           path: shots/
+          retention-days: 3
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
