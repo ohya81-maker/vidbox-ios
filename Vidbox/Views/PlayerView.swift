@@ -9,6 +9,7 @@ struct PlayerView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var showDescription = false
     @State private var showSave = false
+    @State private var showDownload = false
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -99,6 +100,19 @@ struct PlayerView: View {
                      icon: library.isInAnyFolder(item) ? "checkmark.circle.fill" : "plus.circle") {
                     showSave = true
                 }
+                // 다운로드: 영상(소리 포함) 또는 음원만
+                Button { showDownload = true } label: {
+                    DownloadPillLabel(id: item.id)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(Color(.tertiarySystemFill), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .confirmationDialog("다운로드", isPresented: $showDownload, titleVisibility: .visible) {
+                    downloadButtons(item)
+                } message: {
+                    Text("받아 두면 인터넷 없이 재생할 수 있어요. 보관함 → 오프라인 저장에서 볼 수 있습니다.")
+                }
                 pill("자동재생", icon: "infinity", isOn: player.autoplay) {
                     player.autoplay.toggle()
                 }
@@ -108,6 +122,21 @@ struct PlayerView: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
+        }
+    }
+
+    @ViewBuilder
+    private func downloadButtons(_ item: VideoItem) -> some View {
+        let downloads = DownloadManager.shared
+        ForEach([DownloadKind.video, .audio], id: \.self) { kind in
+            let title = kind == .video ? "영상 (소리 포함, 720p)" : "음원만 (m4a)"
+            if let file = downloads.file(item.id, kind) {
+                Button("\(kind.label) 삭제", role: .destructive) { downloads.delete(file) }
+            } else if downloads.isDownloading(item.id, kind) {
+                Button("\(kind.label) 다운로드 취소", role: .destructive) { downloads.cancel(item.id, kind) }
+            } else {
+                Button(title) { downloads.start(item, kind: kind) }
+            }
         }
     }
 

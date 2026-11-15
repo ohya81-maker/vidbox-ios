@@ -295,6 +295,7 @@ struct LibraryView: View {
     @EnvironmentObject private var account: AccountStore
     @State private var showLogin = false
     @State private var confirmLogout = false
+    @ObservedObject private var downloads = DownloadManager.shared
 
     /// 홈 화면 안으로 밀어 넣어(push) 보여주므로 자체 NavigationStack은 없다
     var body: some View {
@@ -334,6 +335,18 @@ struct LibraryView: View {
                             Button("모두 지우기") { library.clearHistory() }
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Section {
+                    NavigationLink {
+                        DownloadsView()
+                    } label: {
+                        HStack {
+                            Label("오프라인 저장 (다운로드)", systemImage: "arrow.down.circle")
+                            Spacer()
+                            Text("\(downloads.files.count)개").foregroundStyle(.secondary)
                         }
                     }
                 }

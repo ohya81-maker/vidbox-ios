@@ -27,6 +27,7 @@ struct RootView: View {
     @State private var tab: AppTab = .home
     @State private var searchText = ""
     @State private var searchQuery = ""
+    @State private var showDownloadsTest = false
 
     var body: some View {
         TabView(selection: $tab) {
@@ -55,6 +56,9 @@ struct RootView: View {
         .fullScreenCover(isPresented: $player.isExpanded) {
             PlayerView()
         }
+        .sheet(isPresented: $showDownloadsTest) {
+            NavigationStack { DownloadsView() }
+        }
         .task { await runLaunchHooks() }
     }
 
@@ -63,6 +67,15 @@ struct RootView: View {
         let defaults = UserDefaults.standard
         if let name = defaults.string(forKey: "ktubeTab"), let target = AppTab(rawValue: name) {
             tab = target
+        }
+        // 테스트: 영상·음원 다운로드 후 목록 화면 (-ktubeDownload <id>)
+        if let id = defaults.string(forKey: "ktubeDownload") {
+            let item = VideoItem(id: id, title: "다운로드 테스트", channel: "KTUBE", channelThumbnail: nil, thumbnail: nil,
+                                 duration: nil, views: nil, published: nil, isLive: false)
+            DownloadManager.shared.start(item, kind: .audio)
+            DownloadManager.shared.start(item, kind: .video)
+            showDownloadsTest = true
+            return
         }
         if let q = defaults.string(forKey: "ktubeSearch") {
             tab = .search

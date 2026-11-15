@@ -42,6 +42,22 @@ actor StreamResolver {
         let date: Date
         /// YouTube가 알려준 실제 길이(초). 재생기가 잘못 계산한 길이를 바로잡을 때 쓴다
         var length: Double? = nil
+        /// 다운로드용: 영상(720p 우선) / 원본 오디오 / 앞부분만 허용될 때의 360p 합본
+        var downloadVideo: DashFormat? = nil
+        var downloadAudio: DashFormat? = nil
+        var downloadMuxed: URL? = nil
+    }
+
+    /// 다운로드에 쓸 파일 주소
+    struct DownloadSources: Sendable {
+        let video: DashFormat?
+        let audio: DashFormat?
+        let muxed: URL?
+    }
+
+    func downloadSources(id: String) async throws -> DownloadSources {
+        let e = try await entry(for: id)
+        return DownloadSources(video: e.downloadVideo, audio: e.downloadAudio, muxed: e.downloadMuxed)
     }
 
     private var cache: [String: Entry] = [:]
@@ -52,9 +68,14 @@ actor StreamResolver {
     // MARK: Public
 
     func candidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
-        let entry = try await entry(for: id)
+        // 다운로드해 둔 파일이 있으면 그것부터 (인터넷 없이 재생)
+        let offline = DownloadIndex.shared.files(for: id, audioOnly: audioOnly).map { PlaybackSource.single($0) }
+        guard let entry = try? await entry(for: id) else {
+            if !offline.isEmpty { return offline }
+            throw AppError.noPlayableStream
+        }
         // 영상 모드에서는 영상 후보를 반드시 먼저 (오디오 파일이 앞에 오면 화면 없이 소리만 나옴)
-        let list = audioOnly ? entry.audio + entry.video : entry.video + entry.audio
+        let list = offline + (audioOnly ? entry.audio + entry.video : entry.video + entry.audio)
         guard !list.isEmpty else { throw AppError.noPlayableStream }
         return list
     }
@@ -188,15 +209,18 @@ actor StreamResolver {
 
         // 안전장치: 그래도 고화질 파일이 앞부분만 허용되면(뒤쪽 1KB 요청이 403)
         // 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
+        var gatedMuxed: URL?
         if let probe = audioFormat ?? videoFormats.first, await isGated(probe),
            let full = try? await fetchAndroidMuxed(id: id) {
             video.insert(.limited(full), at: 0)
             audio.insert(.limited(full), at: 0)
+            gatedMuxed = full
         }
 
         guard !video.isEmpty || !audio.isEmpty else { throw AppError.noPlayableStream }
         let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
-        return Entry(video: video, audio: audio, date: Date(), length: length)
+        return Entry(video: video, audio: audio, date: Date(), length: length,
+                     downloadVideo: videoFormats.first, downloadAudio: audioFormat, downloadMuxed: gatedMuxed)
     }
 
     /// 파일 뒤쪽(85%)을 1KB만 요청해서 403이면 "앞부분만 허용"된 영상

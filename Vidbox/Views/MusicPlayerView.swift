@@ -127,6 +127,7 @@ struct MusicPlayerView: View {
 
     @State private var showQueue = false
     @State private var showLyrics = false
+    @State private var confirmDeleteDownload = false
 
     /// 맨 아래 손잡이 — 누르거나 위로 밀면 다음 트랙 목록
     private var upNextHandle: some View {
@@ -162,6 +163,27 @@ struct MusicPlayerView: View {
                 pill("가사", icon: "quote.bubble") { showLyrics = true }
                 pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
                      icon: library.isInAnyFolder(item) ? "checkmark" : "text.badge.plus") { showSave = true }
+                // 음원 다운로드 (인터넷 없이 듣기)
+                Button {
+                    let downloads = DownloadManager.shared
+                    if downloads.file(item.id, .audio) != nil {
+                        confirmDeleteDownload = true
+                    } else if downloads.isDownloading(item.id, .audio) {
+                        downloads.cancel(item.id, .audio)
+                    } else {
+                        downloads.start(item, kind: .audio)
+                    }
+                } label: {
+                    DownloadPillLabel(id: item.id, dark: true)
+                        .padding(.horizontal, 16)
+                        .frame(height: 40)
+                        .background(.white.opacity(0.12), in: Capsule())
+                }
+                .confirmationDialog("다운로드한 음원을 삭제할까요?", isPresented: $confirmDeleteDownload, titleVisibility: .visible) {
+                    Button("삭제", role: .destructive) {
+                        if let f = DownloadManager.shared.file(item.id, .audio) { DownloadManager.shared.delete(f) }
+                    }
+                }
                 ShareLink(item: item.shareURL) {
                     pillLabel("공유", icon: "arrowshape.turn.up.right")
                 }
