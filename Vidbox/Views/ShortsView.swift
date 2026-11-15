@@ -247,6 +247,8 @@ struct ShortsView: View {
     @StateObject private var shorts = ShortsPlayer()
     @EnvironmentObject private var player: PlayerManager
     @State private var currentID: String?
+    /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
+    @Environment(\.colorScheme) private var appScheme
 
     var body: some View {
         // 바깥: 하단 탭바/홈 인디케이터 높이만 읽는다. 안쪽: 화면 전체를 한 페이지로 써서
@@ -280,6 +282,17 @@ struct ShortsView: View {
         .ignoresSafeArea()
         }
         .background(Color.black)
+        // 탭바 뒤 띠를 앱 배경색으로: 유리 탭바가 검은 쇼츠 위에서 어둡게 바뀌지 않고
+        // 다른 탭과 같은 색(라이트 모드 흰색)으로 보이게
+        .overlay(alignment: .bottom) {
+            GeometryReader { g in
+                (appScheme == .light ? Color.white : Color.black)
+                    .frame(height: g.safeAreaInsets.bottom)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .ignoresSafeArea()
+            }
+            .allowsHitTesting(false)
+        }
         .overlay {
             if feed.items.isEmpty {
                 if let message = feed.errorMessage {
