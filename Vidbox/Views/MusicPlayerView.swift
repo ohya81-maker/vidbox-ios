@@ -162,64 +162,79 @@ struct MusicPlayerView: View {
         return "다음 트랙"
     }
 
-    /// 저장 · 공유 · 동영상으로 보기 — 둥근 알약 버튼
-    /// 화면에 다 들어가면 가운데 정렬, 넘치면 가로 스크롤
+    /// 가사 · 저장 · 다운로드 · 공유 · 다음 트랙 — 둥근 알약 버튼.
+    /// 항상 한 줄 가운데 정렬: 화면이 좁으면 알약을 단계적으로 작게(아이콘 없이까지) 줄인다
     private func actionRow(_ item: VideoItem) -> some View {
         ViewThatFits(in: .horizontal) {
-            actionPills(item)
-                .frame(maxWidth: .infinity)
-            ScrollView(.horizontal, showsIndicators: false) {
-                actionPills(item)
+            ForEach(PillSize.allCases, id: \.self) { size in
+                actionPills(item, size: size)
             }
-            .scrollClipDisabled()
+        }
+        .frame(maxWidth: .infinity)
+        .confirmationDialog("다운로드한 음원을 삭제할까요?", isPresented: $confirmDeleteDownload, titleVisibility: .visible) {
+            Button("삭제", role: .destructive) {
+                if let f = DownloadManager.shared.file(item.id, .audio) { DownloadManager.shared.delete(f) }
+            }
         }
     }
 
-    private func actionPills(_ item: VideoItem) -> some View {
-            HStack(spacing: 10) {
-                pill("가사", icon: "quote.bubble") { showLyrics = true }
-                pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
-                     icon: library.isInAnyFolder(item) ? "checkmark" : "text.badge.plus") { showSave = true }
-                // 음원 다운로드 (인터넷 없이 듣기)
-                Button {
-                    let downloads = DownloadManager.shared
-                    if downloads.file(item.id, .audio) != nil {
-                        confirmDeleteDownload = true
-                    } else if downloads.isDownloading(item.id, .audio) {
-                        downloads.cancel(item.id, .audio)
-                    } else {
-                        downloads.start(item, kind: .audio)
-                    }
-                } label: {
-                    DownloadPillLabel(id: item.id, dark: true)
-                        .padding(.horizontal, 16)
-                        .frame(height: 40)
-                        .background(.white.opacity(0.12), in: Capsule())
-                }
-                .confirmationDialog("다운로드한 음원을 삭제할까요?", isPresented: $confirmDeleteDownload, titleVisibility: .visible) {
-                    Button("삭제", role: .destructive) {
-                        if let f = DownloadManager.shared.file(item.id, .audio) { DownloadManager.shared.delete(f) }
-                    }
-                }
-                ShareLink(item: item.shareURL) {
-                    pillLabel("공유", icon: "arrowshape.turn.up.right")
-                }
-                pill("다음 트랙", icon: "list.bullet") { showQueue = true }
+    enum PillSize: CaseIterable {
+        case regular, compact, small, tiny
+        var font: Font {
+            switch self {
+            case .regular: .subheadline.weight(.semibold)
+            case .compact: .footnote.weight(.semibold)
+            case .small, .tiny: .caption.weight(.semibold)
             }
-            .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private func pill(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { pillLabel(title, icon: icon) }
-    }
-
-    private func pillLabel(_ title: String, icon: String) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon).font(.system(size: 15, weight: .semibold))
-            Text(title).font(.subheadline.weight(.semibold))
         }
-        .padding(.horizontal, 16)
-        .frame(height: 40)
+        var iconSize: CGFloat { self == .regular ? 15 : 12 }
+        var showIcon: Bool { self != .tiny }
+        var padding: CGFloat { switch self { case .regular: 16; case .compact: 12; case .small: 9; case .tiny: 10 } }
+        var height: CGFloat { self == .regular ? 40 : 34 }
+        var spacing: CGFloat { switch self { case .regular: 10; case .compact: 8; default: 6 } }
+    }
+
+    private func actionPills(_ item: VideoItem, size: PillSize) -> some View {
+        HStack(spacing: size.spacing) {
+            pill("가사", icon: "quote.bubble", size: size) { showLyrics = true }
+            pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
+                 icon: library.isInAnyFolder(item) ? "checkmark" : "text.badge.plus", size: size) { showSave = true }
+            // 음원 다운로드 (인터넷 없이 듣기)
+            Button {
+                let downloads = DownloadManager.shared
+                if downloads.file(item.id, .audio) != nil {
+                    confirmDeleteDownload = true
+                } else if downloads.isDownloading(item.id, .audio) {
+                    downloads.cancel(item.id, .audio)
+                } else {
+                    downloads.start(item, kind: .audio)
+                }
+            } label: {
+                DownloadPillLabel(id: item.id, dark: true, font: size.font, iconSize: size.iconSize, showIcon: size.showIcon)
+                    .lineLimit(1)
+                    .padding(.horizontal, size.padding)
+                    .frame(height: size.height)
+                    .background(.white.opacity(0.12), in: Capsule())
+            }
+            ShareLink(item: item.shareURL) {
+                pillLabel("공유", icon: "arrowshape.turn.up.right", size: size)
+            }
+            pill("다음 트랙", icon: "list.bullet", size: size) { showQueue = true }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func pill(_ title: String, icon: String, size: PillSize, action: @escaping () -> Void) -> some View {
+        Button(action: action) { pillLabel(title, icon: icon, size: size) }
+    }
+
+    private func pillLabel(_ title: String, icon: String, size: PillSize) -> some View {
+        HStack(spacing: size == .regular ? 7 : 4) {
+            if size.showIcon { Image(systemName: icon).font(.system(size: size.iconSize, weight: .semibold)) }
+            Text(title).font(size.font).lineLimit(1)
+        }
+        .padding(.horizontal, size.padding)
+        .frame(height: size.height)
         .background(.white.opacity(0.12), in: Capsule())
     }
 

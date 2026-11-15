@@ -361,20 +361,25 @@ struct DownloadPillLabel: View {
     @ObservedObject private var downloads = DownloadManager.shared
     let id: String
     var dark = false
+    var font: Font? = nil
+    var iconSize: CGFloat = 15
+    var showIcon = true
 
     var body: some View {
         let done = downloads.file(id, .video) != nil || downloads.file(id, .audio) != nil
-        HStack(spacing: 7) {
+        let textFont = font ?? (dark ? .subheadline.weight(.semibold) : .footnote.weight(.medium))
+        HStack(spacing: iconSize < 15 ? 4 : 7) {
             if let p = downloads.anyProgress(id) {
                 ProgressView(value: p)
                     .progressViewStyle(.circular)
                     .controlSize(.mini)
-                Text("\(Int(p * 100))%").font(dark ? .subheadline.weight(.semibold) : .footnote.weight(.medium)).monospacedDigit()
+                Text("\(Int(p * 100))%").font(textFont).monospacedDigit()
             } else {
-                Image(systemName: done ? "checkmark.circle.fill" : "arrow.down.circle")
-                    .font(.system(size: 15, weight: .semibold))
-                Text(done ? "저장됨" : "다운로드")
-                    .font(dark ? .subheadline.weight(.semibold) : .footnote.weight(.medium))
+                if showIcon {
+                    Image(systemName: done ? "checkmark.circle.fill" : "arrow.down.circle")
+                        .font(.system(size: iconSize, weight: .semibold))
+                }
+                Text(done ? "저장됨" : "다운로드").font(textFont)
             }
         }
     }
