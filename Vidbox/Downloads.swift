@@ -1,4 +1,5 @@
 import AVFoundation
+import UniformTypeIdentifiers
 import Foundation
 import SwiftUI
 
@@ -20,7 +21,12 @@ struct DownloadedFile: Identifiable, Codable, Hashable {
     let date: Date
 
     var url: URL { DownloadManager.folder.appendingPathComponent(fileName) }
-    var thumbnailURL: URL { DownloadManager.folder.appendingPathComponent(item.id + ".jpg") }
+    /// 썸네일은 숨김 파일로 (파일 앱 목록에 섞이지 않게). 예전 버전 위치도 확인
+    var thumbnailURL: URL {
+        let hidden = DownloadManager.folder.appendingPathComponent(".\(item.id).jpg")
+        let legacy = DownloadManager.folder.appendingPathComponent(item.id + ".jpg")
+        return FileManager.default.fileExists(atPath: legacy.path) ? legacy : hidden
+    }
 }
 
 /// 재생기(다른 스레드)가 "이 영상의 다운로드 파일이 있나"를 바로 물어볼 수 있게 하는 목록
@@ -53,7 +59,12 @@ final class DownloadManager: ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
-    private static var indexFile: URL { folder.appendingPathComponent("index.json") }
+    private static var indexFile: URL { folder.appendingPathComponent(".index.json") }
+    private static var legacyIndexFile: URL { folder.appendingPathComponent("index.json") }
+
+    /// 사용자가 고른 기기 폴더 (예: 나의 iPhone › 다운로드). 다 받으면 여기에 바로 복사한다
+    private static let exportBookmarkKey = "downloadExportFolder.v1"
+    @Published private(set) var exportFolderName: String?
 
     @Published private(set) var files: [DownloadedFile] = []
     /// 진행 중: "<id>-<kind>" → 0...1
@@ -63,11 +74,16 @@ final class DownloadManager: ObservableObject {
     private var tasks: [String: Task<Void, Never>] = [:]
 
     private init() {
-        if let data = try? Data(contentsOf: Self.indexFile),
-           let list = try? JSONDecoder().decode([DownloadedFile].self, from: data) {
+        let data = (try? Data(contentsOf: Self.indexFile)) ?? (try? Data(contentsOf: Self.legacyIndexFile))
+        if let data, let list = try? JSONDecoder().decode([DownloadedFile].self, from: data) {
             files = list.filter { FileManager.default.fileExists(atPath: $0.url.path) }
         }
+        if FileManager.default.fileExists(atPath: Self.legacyIndexFile.path) {
+            save()
+            try? FileManager.default.removeItem(at: Self.legacyIndexFile)
+        }
         DownloadIndex.shared.update(files)
+        exportFolderName = resolveExportFolder()?.lastPathComponent
     }
 
     func file(_ id: String, _ kind: DownloadKind) -> DownloadedFile? {
@@ -98,6 +114,7 @@ final class DownloadManager: ObservableObject {
                 self.files.removeAll { $0.id == saved.id }
                 self.files.insert(saved, at: 0)
                 self.save()
+                self.copyToExportFolder(saved)
             } catch {
                 if !(error is CancellationError) {
                     self?.lastError = "다운로드하지 못했습니다: \(item.title)"
@@ -124,6 +141,59 @@ final class DownloadManager: ObservableObject {
 
     var totalSize: Int64 { files.reduce(0) { $0 + $1.size } }
 
+    // MARK: - 기기 폴더로 바로 저장
+
+    func setExportFolder(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let bookmark = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) else {
+            lastError = "이 폴더에는 저장할 수 없습니다."
+            return
+        }
+        UserDefaults.standard.set(bookmark, forKey: Self.exportBookmarkKey)
+        exportFolderName = url.lastPathComponent
+    }
+
+    func clearExportFolder() {
+        UserDefaults.standard.removeObject(forKey: Self.exportBookmarkKey)
+        exportFolderName = nil
+    }
+
+    private func resolveExportFolder() -> URL? {
+        guard let data = UserDefaults.standard.data(forKey: Self.exportBookmarkKey) else { return nil }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
+        else { return nil }
+        if stale, let fresh = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+            UserDefaults.standard.set(fresh, forKey: Self.exportBookmarkKey)
+        }
+        return url
+    }
+
+    /// 다 받은 파일을 고른 기기 폴더에 복사 (같은 이름이 있으면 덮어쓴다)
+    func copyToExportFolder(_ file: DownloadedFile) {
+        guard let folder = resolveExportFolder() else { return }
+        let source = file.url
+        Task.detached(priority: .utility) {
+            let scoped = folder.startAccessingSecurityScopedResource()
+            defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+            let target = folder.appendingPathComponent(source.lastPathComponent)
+            var coordinatorError: NSError?
+            var copyError: Error?
+            NSFileCoordinator().coordinate(writingItemAt: target, options: .forReplacing, error: &coordinatorError) { url in
+                do {
+                    try? FileManager.default.removeItem(at: url)
+                    try FileManager.default.copyItem(at: source, to: url)
+                } catch { copyError = error }
+            }
+            if coordinatorError != nil || copyError != nil {
+                await MainActor.run {
+                    DownloadManager.shared.lastError = "기기 폴더에 저장하지 못했습니다. 폴더를 다시 지정해 주세요."
+                }
+            }
+        }
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(files) { try? data.write(to: Self.indexFile, options: .atomic) }
         DownloadIndex.shared.update(files)
@@ -138,7 +208,8 @@ final class DownloadManager: ObservableObject {
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
-        let fileName = "\(item.id)-\(kind.rawValue).\(kind.fileExtension)"
+        // 파일 앱에서 알아볼 수 있게 제목으로 저장 (같은 제목이 이미 있으면 영상 ID를 덧붙임)
+        let fileName = await uniqueFileName(for: item, kind: kind)
         let output = folder.appendingPathComponent(fileName)
         try? FileManager.default.removeItem(at: output)
 
@@ -170,7 +241,7 @@ final class DownloadManager: ObservableObject {
         progress(1)
 
         // 썸네일도 같이 보관 (인터넷 없이 목록에 보이도록)
-        let thumb = folder.appendingPathComponent(item.id + ".jpg")
+        let thumb = folder.appendingPathComponent(".\(item.id).jpg")
         if !FileManager.default.fileExists(atPath: thumb.path),
            let (data, _) = try? await URLSession.shared.data(from: item.bestThumbnail) {
             try? data.write(to: thumb)
@@ -178,6 +249,18 @@ final class DownloadManager: ObservableObject {
         let attributes = try? FileManager.default.attributesOfItem(atPath: output.path)
         let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
         return DownloadedFile(item: item, kind: kind, fileName: fileName, size: size, date: Date())
+    }
+
+    private static func uniqueFileName(for item: VideoItem, kind: DownloadKind) -> String {
+        let bad = CharacterSet(charactersIn: "/\\:?%*|\"<>").union(.newlines).union(.controlCharacters)
+        var title = item.title.components(separatedBy: bad).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while title.hasPrefix(".") { title.removeFirst() }
+        if title.count > 80 { title = String(title.prefix(80)).trimmingCharacters(in: .whitespaces) }
+        if title.isEmpty { title = item.id }
+        let taken = Set(shared.files.filter { !($0.item.id == item.id && $0.kind == kind) }.map(\.fileName))
+        let plain = "\(title).\(kind.fileExtension)"
+        return taken.contains(plain) ? "\(title) [\(item.id)].\(kind.fileExtension)" : plain
     }
 
     /// YouTube는 한 번에 큰 파일을 주면 느려지므로 10MB씩 나눠 받는다
@@ -245,6 +328,7 @@ struct DownloadsView: View {
     @ObservedObject private var downloads = DownloadManager.shared
     @EnvironmentObject private var player: PlayerManager
     @State private var filter: DownloadKind?
+    @State private var pickFolder = false
 
     private var shown: [DownloadedFile] {
         downloads.files.filter { filter == nil || $0.kind == filter }
@@ -260,6 +344,28 @@ struct DownloadsView: View {
                 }
                 .pickerStyle(.segmented)
                 .listRowSeparator(.hidden)
+            }
+            Section {
+                // 다 받은 파일을 기기 폴더(예: 나의 iPhone › 다운로드)에 바로 복사
+                Button {
+                    pickFolder = true
+                } label: {
+                    HStack {
+                        Label("기기 저장 폴더", systemImage: "folder")
+                        Spacer()
+                        Text(downloads.exportFolderName ?? "지정 안 함")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if downloads.exportFolderName != nil {
+                    Button("저장 폴더 해제", role: .destructive) { downloads.clearExportFolder() }
+                        .font(.footnote)
+                }
+                Text(downloads.exportFolderName == nil
+                     ? "폴더를 지정하면 다운로드가 끝날 때마다 그 폴더에 바로 저장됩니다. 지정하지 않아도 파일 앱 › 나의 iPhone › K-TUBE › Downloads 에서 볼 수 있어요."
+                     : "다운로드가 끝나면 「\(downloads.exportFolderName ?? "")」 폴더에 바로 저장됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             if let error = downloads.lastError {
                 Text(error).font(.footnote).foregroundStyle(.red)
@@ -291,6 +397,23 @@ struct DownloadsView: View {
                 Text(ByteCountFormatter.string(fromByteCount: downloads.totalSize, countStyle: .file))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                // 파일 앱에서 다운로드 폴더 열기
+                Button {
+                    if let url = URL(string: "shareddocuments://" + DownloadManager.folder.path) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Image(systemName: "folder")
+                }
+            }
+        }
+        .fileImporter(isPresented: $pickFolder, allowedContentTypes: [.folder]) { result in
+            if case .success(let url) = result {
+                downloads.setExportFolder(url)
+                // 이미 받은 파일도 그 폴더로 복사
+                for file in downloads.files { downloads.copyToExportFolder(file) }
             }
         }
     }

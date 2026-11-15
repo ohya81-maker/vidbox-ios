@@ -65,116 +65,201 @@ final class ShortsFeed: ObservableObject {
 
 // MARK: - 쇼츠 전용 플레이어 (반복 재생)
 //
-// 플레이어 하나를 계속 화면에 붙여 두고 영상만 바꾼다.
-// (1.8.0~1.8.9는 다음 쇼츠마다 대기 플레이어를 따로 만들어 미리 받아 두었는데,
-//  넘길 때마다 화면에 붙은 플레이어가 통째로 바뀌어 검은 화면이 깜빡였고,
-//  대기 플레이어 2개가 지금 영상과 동시에 받느라 시작이 오히려 늦어졌다)
-// 다음 쇼츠는 스트림 주소만 미리 풀어 두어(가벼움) 넘기면 바로 받기 시작한다.
+// 실제 YouTube 쇼츠 방식: 피드를 받을 때 다음 영상들의 재생 정보를 미리 받아 두고,
+// 바로 다음 쇼츠는 '자기 화면에 붙은 플레이어'로 첫 몇 초를 미리 받아 첫 프레임까지 그려 둔다.
+// 넘기면 이미 준비된 플레이어의 재생만 누르므로 기다림이 없다.
+// (1.8.x의 깜빡임은 플레이어 하나의 화면을 대기 플레이어로 통째로 바꿔 끼워서였다 —
+//  여기서는 쇼츠마다 화면과 플레이어가 짝으로 붙어 있어 바꿔 끼우는 일이 없다)
+// 지금 쇼츠가 재생을 시작한 뒤에 다음 것을 받기 시작해 대역폭을 뺏지 않는다.
 
 @MainActor
 final class ShortsPlayer: ObservableObject {
-    let player = AVPlayer()
-    @Published private(set) var isReady = false
-    @Published private(set) var isPaused = false
-    @Published private(set) var failed = false
-    private(set) var currentID: String?
-    private var endObserver: NSObjectProtocol?
-    private var task: Task<Void, Never>?
-    private var watchdog: Task<Void, Never>?
-    private var statusObservation: NSKeyValueObservation?
-    /// 다음 쇼츠용으로 미리 만든 재생 항목 (영상 데이터는 받지 않고 재생목록만 받아 둠)
-    private var warmed: [String: AVPlayerItem] = [:]
-    private var warming: [String: Task<Void, Never>] = [:]
+    /// 쇼츠 한 편 = 플레이어 하나
+    final class Slot {
+        let id: String
+        let player = AVPlayer()
+        var candidates: [PlaybackSource] = []
+        var candidateIndex = 0
+        var loadTask: Task<Void, Never>?
+        var endObserver: NSObjectProtocol?
+        var statusObservation: NSKeyValueObservation?
+        var itemObservation: NSKeyValueObservation?
+        var failed = false
 
-    init() {
-        player.automaticallyWaitsToMinimizeStalling = true
-        statusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
-            let playing = observed.timeControlStatus == .playing
-            Task { @MainActor in
-                if playing { self?.isReady = true }
-            }
+        init(id: String) {
+            self.id = id
+            player.automaticallyWaitsToMinimizeStalling = true
+            player.isMuted = true
+            player.actionAtItemEnd = .none
+        }
+
+        func tearDown() {
+            loadTask?.cancel()
+            if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+            statusObservation = nil
+            itemObservation = nil
+            player.pause()
+            player.replaceCurrentItem(with: nil)
         }
     }
 
-    /// 화면이 첫 프레임을 그렸을 때 (재생 시작 신호를 놓친 경우의 보조)
-    func displayChanged(_ ready: Bool, player shown: AVPlayer?) {
-        guard shown === player, ready, player.currentItem != nil, player.timeControlStatus == .playing else { return }
-        isReady = true
-    }
+    @Published private(set) var isReady = false
+    @Published private(set) var isPaused = false
+    @Published private(set) var failed = false
+    /// 준비가 0.4초 넘게 걸릴 때만 로딩 표시 (미리 받아 둔 쇼츠에서 동그라미가 번쩍이지 않게)
+    @Published private(set) var showSpinner = false
+    /// 플레이어가 붙은 쇼츠 목록 (바뀌면 각 페이지가 자기 플레이어를 다시 붙인다)
+    @Published private(set) var slotIDs: [String] = []
+    private(set) var currentID: String?
+    private var slots: [String: Slot] = [:]
+    private var upcoming: [String] = []
+    private var watchdog: Task<Void, Never>?
+    private var spinnerTask: Task<Void, Never>?
+    private var preloadTask: Task<Void, Never>?
 
-    func play(_ item: VideoItem) {
+    func player(for id: String) -> AVPlayer? { slots[id]?.player }
+
+    /// item을 재생. previous는 뒤로 넘길 때를 위해 남겨 두고, upcoming[0]은 첫 프레임까지 미리 받는다
+    func play(_ item: VideoItem, previous: String?, upcoming next: [String]) {
+        upcoming = next
         if currentID == item.id {
             resume()
             return
         }
+        // 이전 쇼츠: 소리 끄고 처음으로 (뒤로 넘기면 바로 다시 나오게 남겨 둔다)
+        if let old = currentID.flatMap({ slots[$0] }) {
+            old.player.pause()
+            old.player.isMuted = true
+            old.player.seek(to: .zero)
+        }
         currentID = item.id
-        isReady = false
         isPaused = false
-        failed = false
-        task?.cancel()
-        player.pause()
-        player.replaceCurrentItem(with: nil)
         PlayerManager.shared.activateAudioSession()
-        load(item.id)
+
+        let slot = slots[item.id] ?? makeSlot(item.id)
+        slot.player.isMuted = false
+        isReady = slot.player.timeControlStatus == .playing
+        failed = slot.failed
+        if slot.player.currentItem != nil { slot.player.play() }
+
+        // 앞뒤 하나씩만 남기고 정리 (메모리·디코더 절약)
+        let keep = Set([previous, item.id, next.first].compactMap { $0 })
+        for (id, s) in slots where !keep.contains(id) {
+            s.tearDown()
+            slots[id] = nil
+        }
+        publishSlots()
+
+        armSpinner()
         armWatchdog(for: item.id)
-    }
-
-    /// 지금 쇼츠의 재생 후보 (자체 HLS → YouTube HLS → 분리 파일 → 360p 합본) 와 시도 중인 순번
-    private var candidates: [PlaybackSource] = []
-    private var candidateIndex = 0
-
-    private func load(_ id: String) {
-        task?.cancel()
-        candidates = []
-        candidateIndex = 0
-        task = Task { [weak self] in
-            // 미리 만들어 둔 항목(재생목록까지 받아 둠)이 있으면 그것부터
-            if let ready = self?.warmed.removeValue(forKey: id) {
-                guard !Task.isCancelled, let self, self.currentID == id else { return }
-                self.attach(ready)
-                return
+        // 다음 쇼츠들의 재생 정보(주소)는 지금 바로 미리 받아 둔다 (가벼운 요청)
+        Task { await StreamResolver.shared.prefetch(next) }
+        // 바로 다음 쇼츠의 영상 데이터는 지금 쇼츠가 재생을 시작한 뒤(또는 1.5초 뒤)에
+        preloadTask?.cancel()
+        if isReady {
+            preloadNext()
+        } else {
+            preloadTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                self?.preloadNext()
             }
-            guard let list = try? await StreamResolver.shared.candidates(id: id, audioOnly: false) else {
-                guard !Task.isCancelled, let self, self.currentID == id else { return }
-                self.failed = true
-                return
-            }
-            guard !Task.isCancelled, let self, self.currentID == id else { return }
-            self.candidates = list
-            await self.tryCandidate(from: 0, id: id)
         }
     }
 
+    private func preloadNext() {
+        preloadTask?.cancel()
+        guard let id = upcoming.first, slots[id] == nil else { return }
+        _ = makeSlot(id)
+        publishSlots()
+    }
+
+    private func publishSlots() {
+        let ids = Array(slots.keys).sorted()
+        if ids != slotIDs { slotIDs = ids }
+    }
+
+    private func makeSlot(_ id: String) -> Slot {
+        let slot = Slot(id: id)
+        slots[id] = slot
+        slot.statusObservation = slot.player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
+            let playing = observed.timeControlStatus == .playing
+            Task { @MainActor in
+                guard let self, playing, self.currentID == id else { return }
+                if !self.isReady {
+                    self.isReady = true
+                    self.showSpinner = false
+                    self.preloadNext()
+                }
+            }
+        }
+        slot.loadTask = Task { [weak self] in
+            guard let list = try? await StreamResolver.shared.candidates(id: id, audioOnly: false) else {
+                guard !Task.isCancelled, let self else { return }
+                slot.failed = true
+                if self.currentID == id { self.failed = true; self.showSpinner = false }
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
+            slot.candidates = list
+            await self.tryCandidate(slot, from: 0)
+        }
+        return slot
+    }
+
     /// index번째 후보부터 재생 항목을 만들어 붙인다 (만들기에 실패하면 다음 후보)
-    private func tryCandidate(from index: Int, id: String) async {
+    private func tryCandidate(_ slot: Slot, from index: Int) async {
         var i = index
-        while i < candidates.count {
-            if let item = try? await StreamResolver.makeItem(candidates[i]) {
-                guard currentID == id else { return }
-                candidateIndex = i
-                attach(item)
+        while i < slot.candidates.count {
+            if let item = try? await StreamResolver.makeItem(slot.candidates[i]) {
+                guard slots[slot.id] === slot else { return }
+                slot.candidateIndex = i
+                attach(item, to: slot)
                 return
             }
             i += 1
         }
-        guard currentID == id else { return }
-        failed = true
+        guard slots[slot.id] === slot else { return }
+        slot.failed = true
+        if currentID == slot.id { failed = true; showSpinner = false }
     }
 
-    private func attach(_ playerItem: AVPlayerItem) {
+    private func attach(_ playerItem: AVPlayerItem, to slot: Slot) {
         Self.tuneForQuickStart(playerItem)
-        // HLS도 반복되도록 끝나면 처음으로 되감기
-        if let old = endObserver { NotificationCenter.default.removeObserver(old) }
-        endObserver = NotificationCenter.default.addObserver(
+        // 끝나면 처음으로 되감아 반복
+        if let old = slot.endObserver { NotificationCenter.default.removeObserver(old) }
+        let slotID = slot.id
+        let slotPlayer = slot.player
+        slot.endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.player.seek(to: .zero)
-                self?.player.play()
+                slotPlayer.seek(to: .zero)
+                if self?.currentID == slotID, self?.isPaused == false { slotPlayer.play() }
             }
         }
-        player.replaceCurrentItem(with: playerItem)
-        if !isPaused { player.play() }
+        // 미리 받는 쇼츠: 재생 준비가 되면 디코더까지 데워 둔다 (첫 프레임이 화면에 그려짐)
+        slot.itemObservation = playerItem.observe(\.status, options: [.new]) { [weak self] item, _ in
+            guard item.status == .readyToPlay else { return }
+            Task { @MainActor in
+                guard let self, self.currentID != slotID, slotPlayer.rate == 0,
+                      slotPlayer.currentItem === item else { return }
+                slotPlayer.preroll(atRate: 1) { _ in }
+            }
+        }
+        slot.player.replaceCurrentItem(with: playerItem)
+        if currentID == slot.id, !isPaused { slot.player.play() }
+    }
+
+    private func armSpinner() {
+        spinnerTask?.cancel()
+        showSpinner = false
+        guard !isReady else { return }
+        spinnerTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, let self, !self.isReady, !self.failed else { return }
+            self.showSpinner = true
+        }
     }
 
     /// 재생이 시작되지 않으면(서버 일시 오류·멈춘 스트림 등) 같은 주소를 다시 기다리지 않고
@@ -182,23 +267,18 @@ final class ShortsPlayer: ObservableObject {
     private func armWatchdog(for id: String) {
         watchdog?.cancel()
         watchdog = Task { [weak self] in
-            for _ in 0..<5 {
+            for _ in 0..<6 {
                 try? await Task.sleep(for: .seconds(5))
-                guard !Task.isCancelled, let self, self.currentID == id else { return }
+                guard !Task.isCancelled, let self, self.currentID == id, let slot = self.slots[id] else { return }
                 if self.isReady || self.isPaused || self.failed { return }
-                self.player.replaceCurrentItem(with: nil)
-                if self.candidates.isEmpty {
-                    // 미리 만든 항목이 멈췄거나 후보를 아직 못 받음 → 후보 목록을 받아 두 번째부터
-                    guard let list = try? await StreamResolver.shared.candidates(id: id, audioOnly: false),
-                          self.currentID == id else { continue }
-                    self.candidates = list
-                    await self.tryCandidate(from: min(1, list.count - 1), id: id)
-                } else if self.candidateIndex + 1 < self.candidates.count {
-                    await self.tryCandidate(from: self.candidateIndex + 1, id: id)
-                } else {
+                if slot.candidates.isEmpty { continue }   // 아직 주소를 받는 중
+                guard slot.candidateIndex + 1 < slot.candidates.count else {
                     self.failed = true
+                    self.showSpinner = false
                     return
                 }
+                slot.player.replaceCurrentItem(with: nil)
+                await self.tryCandidate(slot, from: slot.candidateIndex + 1)
             }
         }
     }
@@ -208,14 +288,15 @@ final class ShortsPlayer: ObservableObject {
     }
 
     func resume() {
-        guard currentID != nil else { return }
+        guard let id = currentID, let slot = slots[id] else { return }
         isPaused = false
-        player.play()
+        slot.player.isMuted = false
+        slot.player.play()
     }
 
     func pause() {
         isPaused = true
-        player.pause()
+        currentID.flatMap { slots[$0] }?.player.pause()
     }
 
     /// 쇼츠는 짧고 화면이 작다: 2초만 받아 두면 바로 시작, 화질은 720p까지만
@@ -223,25 +304,6 @@ final class ShortsPlayer: ObservableObject {
     static func tuneForQuickStart(_ item: AVPlayerItem) {
         item.preferredForwardBufferDuration = 2
         item.preferredMaximumResolution = CGSize(width: 720, height: 1280)
-    }
-
-    /// 다음 쇼츠들: 스트림 주소를 풀고 재생 항목을 만들어 HLS 재생목록까지 받아 둔다.
-    /// 영상 조각은 받지 않으므로 지금 보는 쇼츠의 대역폭을 뺏지 않는다
-    func prefetch(_ items: [VideoItem]) {
-        let keep = Set(items.map(\.id))
-        for id in warmed.keys where !keep.contains(id) { warmed[id] = nil }
-        for (id, t) in warming where !keep.contains(id) { t.cancel(); warming[id] = nil }
-        for item in items where warmed[item.id] == nil && warming[item.id] == nil && item.id != currentID {
-            let id = item.id
-            warming[id] = Task { [weak self] in
-                defer { self?.warming[id] = nil }
-                guard let playerItem = try? await PlayerManager.loadItem(id: id, audioOnly: false),
-                      !Task.isCancelled else { return }
-                _ = try? await playerItem.asset.load(.isPlayable)
-                guard !Task.isCancelled, let self, self.currentID != id else { return }
-                self.warmed[id] = playerItem
-            }
-        }
     }
 }
 
@@ -336,9 +398,10 @@ struct ShortsView: View {
         guard isActive, let id = currentID,
               let index = feed.items.firstIndex(where: { $0.id == id }) else { return }
         if player.isPlaying { player.pause() }
-        shorts.play(feed.items[index])
+        let previous = index > 0 ? feed.items[index - 1].id : nil
+        let upcoming = feed.items.dropFirst(index + 1).prefix(4).map(\.id)
+        shorts.play(feed.items[index], previous: previous, upcoming: upcoming)
         feed.markSeen(id)
-        shorts.prefetch(Array(feed.items.dropFirst(index + 1).prefix(2)))
     }
 }
 
@@ -379,13 +442,13 @@ struct ShortPage: View {
                         }
                         .clipped()
 
+                    // 쇼츠마다 자기 플레이어 화면 (다음 쇼츠는 첫 프레임이 이미 그려져 있다).
+                    // 배경이 투명해 프레임이 오기 전까지는 아래의 썸네일이 보인다
+                    if let avPlayer = shorts.player(for: item.id) {
+                        VideoSurface(avPlayer: avPlayer, gravity: .resizeAspect, background: .clear)
+                    }
                     if isCurrent {
-                        // 넘길 때 검은 화면이 보이지 않도록 배경을 투명하게 두고 항상 표시한다.
-                        // 프레임이 오기 전까지는 아래의 썸네일이 보이고, 첫 프레임부터 영상이 덮는다
-                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect, background: .clear) { ready, shown in
-                            shorts.displayChanged(ready, player: shown)
-                        }
-                        if !shorts.isReady && !shorts.failed {
+                        if shorts.showSpinner && !shorts.isReady && !shorts.failed {
                             ProgressView().tint(.white)
                         }
                         if shorts.failed {
