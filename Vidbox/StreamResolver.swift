@@ -40,6 +40,8 @@ actor StreamResolver {
         let video: [PlaybackSource]
         let audio: [PlaybackSource]
         let date: Date
+        /// YouTube가 알려준 실제 길이(초). 재생기가 잘못 계산한 길이를 바로잡을 때 쓴다
+        var length: Double? = nil
     }
 
     private var cache: [String: Entry] = [:]
@@ -71,6 +73,9 @@ actor StreamResolver {
     }
 
     private func prefetchDone() { prefetching -= 1 }
+
+    /// 캐시에 있는 실제 길이(초)
+    func length(id: String) -> Double? { cache[id]?.length }
 
     func invalidate(_ id: String) {
         cache[id] = nil
@@ -159,11 +164,13 @@ actor StreamResolver {
 
         // 오디오 후보: 자체 HLS 먼저 → m4a 파일 직접
         // (m4a를 직접 재생하면 아이폰이 길이를 실제의 2배로 계산하는 문제가 있어 뒤로 미룸)
+        // m4a 직접 재생은 길이가 2배로 나오므로, 자체 HLS를 한 번 더 시도하고 YouTube HLS를 그다음에 둔다
         var audio: [PlaybackSource] = []
         if let audioFormat {
-            if let path = try? await LocalHLS.shared.buildAudio(id: id, audio: audioFormat) {
-                audio.append(.local(path))
-            }
+            var path = try? await LocalHLS.shared.buildAudio(id: id, audio: audioFormat)
+            if path == nil { path = try? await LocalHLS.shared.buildAudio(id: id, audio: audioFormat) }
+            if let path { audio.append(.local(path)) }
+            if let youtubeHLS { audio.append(.single(youtubeHLS)) }
             audio.append(.single(audioFormat.url))
         }
 
@@ -188,7 +195,8 @@ actor StreamResolver {
         }
 
         guard !video.isEmpty || !audio.isEmpty else { throw AppError.noPlayableStream }
-        return Entry(video: video, audio: audio, date: Date())
+        let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
+        return Entry(video: video, audio: audio, date: Date(), length: length)
     }
 
     /// 파일 뒤쪽(85%)을 1KB만 요청해서 403이면 "앞부분만 허용"된 영상

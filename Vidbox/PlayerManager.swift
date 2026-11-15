@@ -454,6 +454,16 @@ final class PlayerManager: ObservableObject {
                     self.isLoading = false
                     self.duration = seconds.isFinite ? seconds : 0
                     self.updateNowPlaying()
+                    // 재생기가 길이를 실제보다 길게(예: 2배) 계산하면 YouTube가 알려준 길이로 바로잡는다
+                    if let id = self.current?.id {
+                        Task { @MainActor in
+                            if let real = await StreamResolver.shared.length(id: id), real > 0,
+                               self.current?.id == id, self.duration > real * 1.3 {
+                                self.duration = real
+                                self.updateNowPlaying()
+                            }
+                        }
+                    }
                 case .failed:
                     // 이 방식이 실패하면 다음 후보로 자동 전환
                     _ = message
