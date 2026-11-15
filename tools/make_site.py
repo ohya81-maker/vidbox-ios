@@ -147,10 +147,8 @@ for name in ("manifest.plist", "manifest.xml"):
 itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.xml", safe="")
 if signed:
     direct = (f'<a class="btn primary" href="{itms}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이 아이폰에 바로 설치</a>'
-              f'<p class="hint">서명된 IPA입니다 (번들 ID <code>{bundle_id}</code>'
-              + (f', {expires:%Y-%m-%d %H:%M}까지 유효' if expires else '')
-              + '). 설치 후 설정 → 일반 → VPN 및 기기 관리에서 신뢰를 눌러주세요. '
-              '서명에 등록된 아이폰에서만 설치됩니다.</p>')
+              '<p class="hint">설치 후 처음 열 때 「신뢰하지 않는 개발자」가 나오면 '
+              '설정 → 일반 → VPN 및 기기 관리에서 신뢰를 눌러주세요.</p>')
 else:
     direct = ('<p class="hint">지금 올린 IPA는 서명되지 않아 바로 설치할 수 없습니다. '
               '서명된 IPA로 이 페이지를 다시 만들면 여기에 「바로 설치」 버튼이 생깁니다.</p>')
@@ -187,6 +185,13 @@ for key, value in {
     page = page.replace(key, value)
 with open(os.path.join(args.out, "index.html"), "w", encoding="utf-8") as f:
     f.write(page)
+
+# 설치 페이지 QR (외부 스크립트 없이 이미지로)
+try:
+    import qrcode
+    qrcode.make(f"{base}/", border=1, box_size=10).save(os.path.join(args.out, "qr.png"))
+except ImportError:
+    print("qrcode 모듈이 없어 qr.png를 만들지 못했습니다 (pip install qrcode[pil])")
 
 print(f"done: {args.out}  (version {version} build {build}, {size} bytes)")
 for name in sorted(os.listdir(args.out)):

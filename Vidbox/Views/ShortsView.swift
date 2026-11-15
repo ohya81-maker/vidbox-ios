@@ -185,6 +185,9 @@ struct ShortsView: View {
     @StateObject private var shorts = ShortsPlayer()
     @EnvironmentObject private var player: PlayerManager
     @State private var currentID: String?
+    /// 스크롤 위치 (넘기는 도중에도 바뀜). 재생할 쇼츠(currentID)는 넘김이 완전히 멈춘 뒤에 바꾼다 —
+    /// 도중에 바꾸면 영상 교체·화면 갱신이 넘김 애니메이션과 겹쳐 '덜컹'하고 걸린다
+    @State private var scrollID: String?
     /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
     @Environment(\.colorScheme) private var appScheme
 
@@ -212,7 +215,10 @@ struct ShortsView: View {
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $currentID)
+            .scrollPosition(id: $scrollID)
+            .onScrollPhaseChange { _, phase in
+                if phase == .idle, let id = scrollID, id != currentID { currentID = id }
+            }
             .scrollIndicators(.hidden)
             .contentMargins(0, for: .scrollContent)
             .ignoresSafeArea()
@@ -247,7 +253,7 @@ struct ShortsView: View {
         .environment(\.colorScheme, .dark)
         .task {
             await feed.loadInitial()
-            if currentID == nil { currentID = feed.items.first?.id }
+            if currentID == nil { currentID = feed.items.first?.id; scrollID = currentID }
         }
         .onChange(of: currentID) { _, _ in playCurrent() }
         .onChange(of: isActive) { _, active in

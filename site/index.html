@@ -134,18 +134,17 @@
   </header>
 
   <!-- 컴퓨터에서 열었을 때: 폰으로 찍을 QR -->
-  <section class="card glass hidden" id="desktop">
+  <section class="card glass" id="desktop">
     <div class="card-head">
       <div class="icon-tile">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg>
       </div>
       <div>
-        <h2>휴대폰으로 찍어 설치하기</h2>
-        <p>아이폰·안드로이드 모두 이 QR 하나면 됩니다</p>
+        <h2>QR로 설치 페이지 열기</h2>
+        <p>휴대폰 카메라로 찍으면 이 페이지가 열려요</p>
       </div>
     </div>
-    <div id="qr-wrap"><div id="qr"></div></div>
-    <p class="hint url"><code>{{BASE_URL}}/</code></p>
+    <div id="qr-wrap"><div id="qr"><img src="qr.png" width="200" height="200" alt="설치 페이지 QR"></div></div>
   </section>
 
   <!-- 아이폰 -->
@@ -160,15 +159,6 @@
       </div>
     </div>
     {{DIRECT_INSTALL}}
-    <a class="btn secondary" href="sidestore://source?url={{SOURCE_URL_ENC}}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-      SideStore에 추가
-    </a>
-    <a class="btn secondary" href="{{IPA_NAME}}" download>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
-      IPA 내려받기
-    </a>
-    <p class="hint">SideStore 소스 주소: <code>{{SOURCE_URL}}</code></p>
   </section>
 
   <!-- 안드로이드 -->
@@ -188,9 +178,8 @@
   <footer>K-TUBE · 개인용 배포 페이지</footer>
 </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
-  // 기종에 맞는 설치 카드를 맨 위로, 컴퓨터면 QR을 보여준다
+  // 기종에 맞는 설치 카드를 맨 위로. QR 카드는 컴퓨터에선 맨 위, 휴대폰에선 맨 아래(다른 기기에 보여주기용)
   (function () {
     var ua = navigator.userAgent || "";
     var isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -198,27 +187,21 @@
     var label = document.querySelector("#device span");
     var main = document.querySelector("main");
     var header = document.querySelector("header");
+    var footer = document.querySelector("footer");
+    var qr = document.getElementById("desktop");
     function moveFirst(el) { main.insertBefore(el, header.nextSibling); }
 
     if (isIOS) {
       label.textContent = "이 기기: iPhone";
       moveFirst(document.getElementById("ios"));
+      main.insertBefore(qr, footer);
     } else if (isAndroid) {
       label.textContent = "이 기기: Android";
       moveFirst(document.getElementById("android"));
+      main.insertBefore(qr, footer);
     } else {
       label.textContent = "컴퓨터에서 열었어요";
-      var desktop = document.getElementById("desktop");
-      desktop.classList.remove("hidden");
-      moveFirst(desktop);
-      try {
-        new QRCode(document.getElementById("qr"), {
-          text: "{{BASE_URL}}/", width: 200, height: 200,
-          colorDark: "#15151a", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M
-        });
-      } catch (e) {
-        document.getElementById("qr").textContent = "QR을 만들 수 없습니다";
-      }
+      moveFirst(qr);
     }
   })();
 </script>
