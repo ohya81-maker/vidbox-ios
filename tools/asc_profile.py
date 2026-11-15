@@ -20,7 +20,7 @@ import urllib.request
 
 API = "https://api.appstoreconnect.apple.com/v1"
 BUNDLE_ID = "com.mistylake.ktube"
-PROFILE_NAME = "KTUBE AdHoc Auto"
+PROFILE_NAMES = {"adhoc": "KTUBE AdHoc Auto", "appstore": "KTUBE AppStore Auto"}
 
 
 def b64url(data: bytes) -> str:
@@ -118,8 +118,10 @@ def main():
     ap.add_argument("--udid", default="")
     ap.add_argument("--name", default="K-TUBE device")
     ap.add_argument("--cert-serial", default="")
+    ap.add_argument("--type", choices=["adhoc", "appstore"], default="adhoc")
     args = ap.parse_args()
     TOKEN = make_token()
+    PROFILE_NAME = PROFILE_NAMES[args.type]
 
     if args.udid:
         register(args.udid, args.name)
@@ -151,11 +153,13 @@ def main():
 
     status, js = call("POST", "/profiles", {"data": {
         "type": "profiles",
-        "attributes": {"name": PROFILE_NAME, "profileType": "IOS_APP_ADHOC"},
+        "attributes": {"name": PROFILE_NAME,
+                       "profileType": "IOS_APP_ADHOC" if args.type == "adhoc" else "IOS_APP_STORE"},
         "relationships": {
             "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}},
             "certificates": {"data": [{"type": "certificates", "id": chosen[0]["id"]}]},
-            "devices": {"data": [{"type": "devices", "id": d["id"]} for d in devices]},
+            **({"devices": {"data": [{"type": "devices", "id": d["id"]} for d in devices]}}
+               if args.type == "adhoc" else {}),
         },
     }})
     if status not in (200, 201):
