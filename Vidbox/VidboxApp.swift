@@ -31,16 +31,19 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            Tab("홈", systemImage: "house.fill", value: AppTab.home) {
+            Tab("홈", systemImage: tab == .home ? "house.fill" : "house", value: AppTab.home) {
                 HomeView().miniPlayerInset().tint(.primary)
             }
-            Tab("Shorts", systemImage: "play.rectangle.on.rectangle.fill", value: AppTab.shorts) {
+            Tab("Shorts", systemImage: tab == .shorts ? "play.rectangle.on.rectangle.fill" : "play.rectangle.on.rectangle", value: AppTab.shorts) {
                 ShortsView(isActive: tab == .shorts).tint(.primary)
+                    // 쇼츠의 검은 화면 위에서도 탭바를 다른 탭과 같은 색(라이트 모드 흰색)으로
+                    .toolbarBackground(Color(uiColor: .systemBackground), for: .tabBar)
+                    .toolbarBackground(.visible, for: .tabBar)
             }
-            Tab("음악", systemImage: "music.note", value: AppTab.music) {
+            Tab("음악", systemImage: tab == .music ? "headphones.circle.fill" : "headphones.circle", value: AppTab.music) {
                 MusicView().miniPlayerInset().tint(.primary)
             }
-            Tab("KIDS", systemImage: "face.smiling.inverse", value: AppTab.kids) {
+            Tab("KIDS", systemImage: tab == .kids ? "face.smiling.inverse" : "face.smiling", value: AppTab.kids) {
                 KidsView().miniPlayerInset().tint(.primary)
             }
             Tab(value: AppTab.search, role: .search) {
@@ -50,6 +53,8 @@ struct RootView: View {
         // 선택된 탭은 브랜드 빨강: 밝은 화면(음악)·검은 화면(쇼츠) 위 유리 탭바 어디서나 잘 보이게.
         // (.primary는 라이트 모드에서 검정이라 쇼츠의 어두운 탭바에서 선택 탭이 안 보였다)
         .tint(Color(red: 0.88, green: 0.15, blue: 0.17))
+        // 유튜브처럼: 선택 안 된 탭은 윤곽선 아이콘, 선택된 탭만 채운 아이콘 (자동 .fill 끄기)
+        .environment(\.symbolVariants, .none)
         // iOS 26: 검색 탭을 누르면 하단 탭이 왼쪽으로 접히고 그 자리에 검색창이 나온다
         .searchable(text: $searchText, prompt: "동영상, 채널, 음악 검색")
         .onSubmit(of: .search) {

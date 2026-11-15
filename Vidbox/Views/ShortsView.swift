@@ -355,10 +355,11 @@ struct ShortPage: View {
                         .clipped()
 
                     if isCurrent {
-                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect) { ready, shown in
+                        // 넘길 때 검은 화면이 보이지 않도록 배경을 투명하게 두고 항상 표시한다.
+                        // 프레임이 오기 전까지는 아래의 썸네일이 보이고, 첫 프레임부터 영상이 덮는다
+                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect, background: .clear) { ready, shown in
                             shorts.displayChanged(ready, player: shown)
                         }
-                        .opacity(shorts.isReady ? 1 : 0.01)
                         if !shorts.isReady && !shorts.failed {
                             ProgressView().tint(.white)
                         }

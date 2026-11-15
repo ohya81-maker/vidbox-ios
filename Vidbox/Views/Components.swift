@@ -217,6 +217,8 @@ struct VideoSurface: UIViewRepresentable {
     /// 쇼츠처럼 별도 플레이어를 쓸 때
     var avPlayer: AVPlayer? = nil
     var gravity: AVLayerVideoGravity = .resizeAspect
+    /// 영상 뒤 배경. 쇼츠는 투명 — 프레임이 그려지기 전엔 아래 썸네일이 그대로 보인다
+    var background: UIColor = .black
     /// 첫 프레임이 실제로 화면에 그려졌는지 (쇼츠: 그 전까지 썸네일을 보여 준다)
     var onReadyForDisplay: ((Bool, AVPlayer?) -> Void)? = nil
 
@@ -228,7 +230,7 @@ struct VideoSurface: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PlayerUIView {
         let view = PlayerUIView()
-        view.backgroundColor = .black
+        view.backgroundColor = background
         view.playerLayer.videoGravity = gravity
         if let manager {
             manager.register(view.playerLayer)

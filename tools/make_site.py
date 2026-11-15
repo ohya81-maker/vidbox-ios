@@ -86,7 +86,9 @@ notes = args.notes or f"KTUBE {version}"
 
 source = {
     "name": "K-TUBE",
-    "identifier": "me.synology.mistylake.ktube",
+    # 예전 소스(/youtube/apps.json, 지금은 없음)와 같은 identifier면 SideStore가
+    # 다시 추가해도 예전 주소의 소스를 그대로 써서 1.7.5에 멈춰 있었다 → 새 identifier
+    "identifier": "me.synology.mistylake.ktube.v2",
     "subtitle": "개인용 KTUBE 앱 배포",
     "sourceURL": f"{base}/apps.json",
     "iconURL": f"{base}/icon.png",
