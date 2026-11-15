@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct MusicSection: Identifiable {
+struct MusicSection: Identifiable, Codable {
     let id: String
     let title: String
     let query: String
@@ -40,6 +40,8 @@ enum MusicTaste {
 
 @MainActor
 final class MusicViewModel: ObservableObject {
+    /// 앱 시작 때 미리 불러 두고, 음악 탭은 이 하나를 같이 쓴다 (탭에 들어가면 바로 보이게)
+    static let shared = MusicViewModel()
     /// 섹션마다 검색어 후보 여러 개 — 새로고침할 때마다 다른 후보로 바꿔 최신곡이 돌아가며 나온다
     private static let pools: [(id: String, title: String, queries: [String])] = [
         ("quick", "빠른 선곡", ["요즘 인기 노래", "요즘 많이 듣는 노래", "최신 인기곡", "이번 주 인기 노래"]),
@@ -51,9 +53,40 @@ final class MusicViewModel: ObservableObject {
         ("indie", "인디 · 어쿠스틱", ["인디 어쿠스틱", "인디 신곡", "어쿠스틱 감성", "밴드 음악"]),
     ]
 
-    @Published var sections: [MusicSection] = MusicViewModel.makeSections()
+    @Published var sections: [MusicSection] = MusicViewModel.initialSections()
     /// 내가 들은 곡에서 이어지는 추천 (YouTube Music 라디오) — 들은 곡이 없으면 비어 있다
-    @Published private(set) var forYou: [MusicSection] = []
+    @Published private(set) var forYou: [MusicSection] = MusicViewModel.cached?.forYou ?? []
+
+    /// 지난번에 불러온 목록 — 다음 실행 때 로딩 없이 먼저 보여주고 뒤에서 새로 고친다
+    private struct Snapshot: Codable { var sections: [MusicSection]; var forYou: [MusicSection] }
+    private static let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("music-home.json")
+    private static let cached: Snapshot? = {
+        guard let data = try? Data(contentsOf: cacheURL),
+              let snap = try? JSONDecoder().decode(Snapshot.self, from: data),
+              snap.sections.contains(where: { !$0.items.isEmpty }) else { return nil }
+        return snap
+    }()
+    /// 검색어는 새로 고르되, 곡 목록은 지난번 것을 채워 넣어 바로 보이게 한다
+    private static func initialSections() -> [MusicSection] {
+        var fresh = makeSections()
+        guard let cached else { return fresh }
+        for i in fresh.indices {
+            if let old = cached.sections.first(where: { $0.id == fresh[i].id }), !old.items.isEmpty {
+                fresh[i].items = old.items
+                fresh[i].loaded = true
+            }
+        }
+        return fresh
+    }
+
+    private func saveCache() {
+        let snap = Snapshot(sections: sections.filter { !$0.items.isEmpty }, forYou: forYou)
+        let url = Self.cacheURL
+        Task.detached(priority: .utility) {
+            if let data = try? JSONEncoder().encode(snap) { try? data.write(to: url, options: .atomic) }
+        }
+    }
     @Published private(set) var moodSection: MusicSection?
     @Published private(set) var isLoadingMood = false
     private var loaded = false
@@ -77,7 +110,8 @@ final class MusicViewModel: ObservableObject {
                 group.addTask { (id, await InnerTubeClient.shared.musicSongs(query)) }
             }
             for await (id, items) in group {
-                if let index = sections.firstIndex(where: { $0.id == id }) {
+                // 불러오기 실패(빈 결과)면 지난번 목록을 그대로 둔다
+                if let index = sections.firstIndex(where: { $0.id == id }), !(items.isEmpty && !sections[index].items.isEmpty) {
                     // 「빠른 선곡」은 매번 순서를 섞는다
                     sections[index].items = id == "quick" ? items.shuffled() : items
                     sections[index].loaded = true
@@ -85,6 +119,7 @@ final class MusicViewModel: ObservableObject {
             }
         }
         await personal
+        saveCache()
     }
 
     /// 최근 들은 곡 하나 → 비슷한 곡 라디오, 많이 들은 아티스트 → 그 아티스트 노래
@@ -105,7 +140,7 @@ final class MusicViewModel: ObservableObject {
                                            items: songs.shuffled(), loaded: true))
             }
         }
-        forYou = result
+        if !result.isEmpty || forYou.isEmpty { forYou = result }   // 실패하면 지난번 추천 유지
     }
 
     func reload() async {
@@ -129,7 +164,7 @@ final class MusicViewModel: ObservableObject {
 }
 
 struct MusicView: View {
-    @StateObject private var model = MusicViewModel()
+    @ObservedObject private var model = MusicViewModel.shared
     @EnvironmentObject private var player: PlayerManager
     @State private var selectedMood: String?
     @State private var searchText = ""

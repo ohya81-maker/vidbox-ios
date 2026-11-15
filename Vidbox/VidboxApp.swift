@@ -65,6 +65,11 @@ struct RootView: View {
     /// 자동 화면 점검용 실행 인자 (CI 시뮬레이터 스크린샷): -ktubeTab music / -ktubePlay <id> / -ktubeSeek 100
     private func runLaunchHooks() async {
         let defaults = UserDefaults.standard
+        // 음악 탭 목록을 미리 불러 둔다 (홈 로딩과 겹치지 않게 조금 뒤에)
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await MusicViewModel.shared.loadAll()
+        }
         if let name = defaults.string(forKey: "ktubeTab"), let target = AppTab(rawValue: name) {
             tab = target
         }
