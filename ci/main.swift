@@ -59,3 +59,9 @@ for (id, audioOnly) in cases {
     }
 }
 print("PLAYTEST done")
+
+// 앱의 다운로드 목록 대신 (CI 재생 점검에서는 다운로드 파일이 없다)
+final class DownloadIndex: @unchecked Sendable {
+    static let shared = DownloadIndex()
+    func files(for id: String, audioOnly: Bool) -> [URL] { [] }
+}
