@@ -16,7 +16,7 @@ struct LyricsSheet: View {
                     }
                 }
                 if loading {
-                    ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 40)
+                    ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 16)
                 } else if let lyrics {
                     Text(lyrics.text)
                         .font(.system(size: 21, weight: .bold))
@@ -26,15 +26,19 @@ struct LyricsSheet: View {
                         Text(source).font(.caption).foregroundStyle(.white.opacity(0.5))
                     }
                 } else {
-                    VStack(spacing: 10) {
-                        Image(systemName: "quote.bubble").font(.system(size: 34))
-                        Text("이 노래는 가사가 없어요").font(.headline)
-                        Text("YouTube Music에 가사가 등록된 노래만 볼 수 있어요")
-                            .font(.footnote)
-                            .foregroundStyle(.white.opacity(0.6))
+                    // 시트가 반만 올라와도 보이도록 제목 바로 아래에 작게
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "quote.bubble").font(.system(size: 26))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("이 노래는 가사가 없어요").font(.headline)
+                            Text("YouTube Music이나 LRCLIB에 가사가 등록된 노래만 볼 수 있어요")
+                                .font(.footnote)
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 40)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                 }
             }
             .padding(.horizontal, 24)
@@ -128,7 +132,7 @@ struct MusicPlayerView: View {
     }
 
     @State private var showQueue = false
-    @State private var showLyrics = false
+    @State private var showLyrics = UserDefaults.standard.bool(forKey: "ktubeLyrics")   // CI 화면 점검용
     @State private var confirmDeleteDownload = false
 
     /// 맨 아래 손잡이 — 누르거나 위로 밀면 다음 트랙 목록
@@ -159,8 +163,19 @@ struct MusicPlayerView: View {
     }
 
     /// 저장 · 공유 · 동영상으로 보기 — 둥근 알약 버튼
+    /// 화면에 다 들어가면 가운데 정렬, 넘치면 가로 스크롤
     private func actionRow(_ item: VideoItem) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ViewThatFits(in: .horizontal) {
+            actionPills(item)
+                .frame(maxWidth: .infinity)
+            ScrollView(.horizontal, showsIndicators: false) {
+                actionPills(item)
+            }
+            .scrollClipDisabled()
+        }
+    }
+
+    private func actionPills(_ item: VideoItem) -> some View {
             HStack(spacing: 10) {
                 pill("가사", icon: "quote.bubble") { showLyrics = true }
                 pill(library.isInAnyFolder(item) ? "저장됨" : "저장",
@@ -191,8 +206,7 @@ struct MusicPlayerView: View {
                 }
                 pill("다음 트랙", icon: "list.bullet") { showQueue = true }
             }
-        }
-        .scrollClipDisabled()
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     private func pill(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
