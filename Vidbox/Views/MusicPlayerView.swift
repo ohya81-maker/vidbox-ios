@@ -165,7 +165,6 @@ struct MusicPlayerView: View {
                 ShareLink(item: item.shareURL) {
                     pillLabel("공유", icon: "arrowshape.turn.up.right")
                 }
-                pill("동영상", icon: "play.rectangle") { player.setAudioOnly(false) }
                 pill("다음 트랙", icon: "list.bullet") { showQueue = true }
             }
         }
