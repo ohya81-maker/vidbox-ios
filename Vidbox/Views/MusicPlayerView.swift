@@ -44,7 +44,9 @@ struct LyricsSheet: View {
         .task(id: player.current?.id) {
             guard let id = player.current?.id else { return }
             loading = true
-            lyrics = await InnerTubeClient.shared.lyrics(videoID: id)
+            let item = player.current
+            lyrics = await InnerTubeClient.shared.lyrics(videoID: id, title: item?.title ?? "", artist: item?.channel ?? "",
+                                                         seconds: await StreamResolver.shared.length(id: id) ?? (player.duration > 0 ? player.duration : nil))
             loading = false
         }
     }

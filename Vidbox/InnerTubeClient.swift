@@ -15,18 +15,18 @@ final class InnerTubeClient {
         session = URLSession(configuration: config)
     }
 
-    private func context(music: Bool) -> [String: Any] {
+    private func context(music: Bool, hl: String = "ko") -> [String: Any] {
         [
             "client": [
                 "clientName": music ? "WEB_REMIX" : "WEB",
                 "clientVersion": music ? "1.20251110.01.00" : "2.20251110.01.00",
-                "hl": "ko",
+                "hl": hl,
                 "gl": "KR",
             ],
         ]
     }
 
-    private func post(_ endpoint: String, body: [String: Any], music: Bool = false) async throws -> Any {
+    private func post(_ endpoint: String, body: [String: Any], music: Bool = false, hl: String = "ko") async throws -> Any {
         let host = music ? "https://music.youtube.com" : "https://www.youtube.com"
         var request = URLRequest(url: URL(string: host + "/youtubei/v1/" + endpoint + "?prettyPrint=false")!)
         request.httpMethod = "POST"
@@ -38,7 +38,7 @@ final class InnerTubeClient {
             request.setValue(value, forHTTPHeaderField: key)
         }
         var payload = body
-        payload["context"] = context(music: music)
+        payload["context"] = context(music: music, hl: hl)
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await session.data(for: request)
@@ -216,13 +216,67 @@ final class InnerTubeClient {
     }
 
     /// YouTube Music 가사 (가사가 등록된 노래만). 본문과 출처(예: "출처: LyricFind")
-    func lyrics(videoID: String) async -> (text: String, source: String?)? {
-        guard let next = try? await post("next", body: ["videoId": videoID], music: true) else { return nil }
+    /// 가사. YouTube Music 가사가 한국 노래인데 로마자(영어 발음 표기)로만 오는 경우가 있어서,
+    /// 한글이 하나도 없으면 LRCLIB(무료 가사 DB)에서 한글 원문을 찾아 대신 보여준다.
+    func lyrics(videoID: String, title: String = "", artist: String = "", seconds: Double? = nil) async -> (text: String, source: String?)? {
+        let yt = await lyrics(videoID: videoID, hl: "ko")
+        if let yt, Self.hangulCount(yt.text) > 0 { return yt }
+        if let original = await Self.lrclib(title: title, artist: artist, seconds: seconds,
+                                            requireHangul: yt != nil) {
+            return original
+        }
+        return yt
+    }
+
+    static func hangulCount(_ s: String) -> Int {
+        s.unicodeScalars.filter { (0xAC00...0xD7A3).contains($0.value) || (0x3131...0x318E).contains($0.value) }.count
+    }
+
+    /// "아이유 (IU) - Topic", "[MV] 밤편지 (Official)" 같은 표기를 검색어로 정리
+    static func cleanLyricsQuery(_ s: String) -> String {
+        var t = s.replacingOccurrences(of: " - Topic", with: "")
+        t = t.replacingOccurrences(of: #"\[[^\]]*\]|\([^)]*\)|【[^】]*】"#, with: " ", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"(?i)\b(official|music video|m/?v|lyrics?|audio|video)\b"#, with: " ", options: .regularExpression)
+        return t.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    static func lrclib(title: String, artist: String, seconds: Double?, requireHangul: Bool) async -> (text: String, source: String?)? {
+        var parts = title.components(separatedBy: " - ")
+        var track = cleanLyricsQuery(parts.count > 1 ? parts.removeLast() : title)
+        var singer = cleanLyricsQuery(parts.count >= 1 && title.contains(" - ") ? parts.joined(separator: " - ") : artist)
+        if track.isEmpty { track = cleanLyricsQuery(title) }
+        if singer.isEmpty { singer = cleanLyricsQuery(artist) }
+        guard !track.isEmpty else { return nil }
+        var queries: [[URLQueryItem]] = [[URLQueryItem(name: "track_name", value: track), URLQueryItem(name: "artist_name", value: singer)]]
+        queries.append([URLQueryItem(name: "q", value: "\(singer) \(track)")])
+        queries.append([URLQueryItem(name: "q", value: track)])
+        for items in queries {
+            var comps = URLComponents(string: "https://lrclib.net/api/search")!
+            comps.queryItems = items
+            var req = URLRequest(url: comps.url!)
+            req.setValue("KTUBE/1.0", forHTTPHeaderField: "User-Agent")
+            req.timeoutInterval = 10
+            guard let (data, _) = try? await URLSession.shared.data(for: req),
+                  let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { continue }
+            let picked = list.compactMap { r -> (String, Double)? in
+                guard let text = r["plainLyrics"] as? String, !text.isEmpty else { return nil }
+                if requireHangul && hangulCount(text) == 0 { return nil }
+                let diff = seconds.map { abs(((r["duration"] as? Double) ?? 0) - $0) } ?? 0
+                if let seconds, seconds > 0, diff > 15 { return nil }
+                return (text, diff)
+            }.min { $0.1 < $1.1 }
+            if let picked { return (picked.0, "출처: LRCLIB") }
+        }
+        return nil
+    }
+
+    private func lyrics(videoID: String, hl: String) async -> (text: String, source: String?)? {
+        guard let next = try? await post("next", body: ["videoId": videoID], music: true, hl: hl) else { return nil }
         var browseID: String?
         Self.walk(next) { key, value in
             if browseID == nil, key == "browseId", let id = value as? String, id.hasPrefix("MPLY") { browseID = id }
         }
-        guard let browseID, let json = try? await post("browse", body: ["browseId": browseID], music: true) else { return nil }
+        guard let browseID, let json = try? await post("browse", body: ["browseId": browseID], music: true, hl: hl) else { return nil }
         var text: String?
         var source: String?
         Self.walk(json) { key, value in
