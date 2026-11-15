@@ -147,8 +147,9 @@ for name in ("manifest.plist", "manifest.xml"):
 itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.xml", safe="")
 if signed:
     direct = (f'<a class="btn primary" href="{itms}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이 아이폰에 바로 설치</a>'
-              '<p class="hint">설치 후 처음 열 때 「신뢰하지 않는 개발자」가 나오면 '
-              '설정 → 일반 → VPN 및 기기 관리에서 신뢰를 눌러주세요.</p>')
+              '<a class="btn secondary" href="register.html">처음 설치하는 아이폰이면 → 이 아이폰 등록</a>'
+              '<p class="hint">「무결성을 확인할 수 없음」이 나오면 등록되지 않은 아이폰이에요. '
+              '위 「이 아이폰 등록」을 한 번 하면 몇 분 뒤 설치할 수 있어요.</p>')
 else:
     direct = ('<p class="hint">지금 올린 IPA는 서명되지 않아 바로 설치할 수 없습니다. '
               '서명된 IPA로 이 페이지를 다시 만들면 여기에 「바로 설치」 버튼이 생깁니다.</p>')
@@ -185,6 +186,10 @@ for key, value in {
     page = page.replace(key, value)
 with open(os.path.join(args.out, "index.html"), "w", encoding="utf-8") as f:
     f.write(page)
+
+# 기기 등록(PHP) 파일들
+for name in ("register.html", "enroll.php", "udid.php", "status.php", "lib.php"):
+    shutil.copyfile(os.path.join(ROOT, "site", name), os.path.join(args.out, name))
 
 # 설치 페이지 QR (외부 스크립트 없이 이미지로)
 try:

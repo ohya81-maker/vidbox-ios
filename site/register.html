@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>K-TUBE 기기 등록</title>
+<link rel="apple-touch-icon" href="icon.png">
+<style>
+  :root { --bg:#f4f4f8; --text:#15151a; --sub:#61616b; --card:rgba(255,255,255,.75); --hair:rgba(20,20,30,.08); --accent:#e5262c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b0b10; --text:#f4f4f7; --sub:#a0a0ab; --card:rgba(38,38,48,.6); --hair:rgba(255,255,255,.08); } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:28px 16px 48px; }
+  h1 { font-size:24px; margin:8px 0 4px; letter-spacing:-.4px; }
+  .sub { color:var(--sub); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--hair); border-radius:20px; padding:20px; margin-bottom:14px; }
+  .btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:15px; border-radius:14px;
+         background:var(--accent); color:#fff; font-weight:700; font-size:17px; text-decoration:none; border:0; }
+  .btn.secondary { background:transparent; color:var(--text); border:1px solid var(--hair); font-weight:600; }
+  ol { padding-left:20px; margin:14px 0 0; color:var(--sub); }
+  ol li { margin:6px 0; }
+  b { color:var(--text); }
+  .state { display:flex; gap:12px; align-items:center; font-weight:600; }
+  .spin { width:22px; height:22px; border:3px solid var(--hair); border-top-color:var(--accent); border-radius:50%; animation:s 1s linear infinite; flex:none; }
+  @keyframes s { to { transform:rotate(360deg); } }
+  .bar { height:6px; background:var(--hair); border-radius:3px; overflow:hidden; margin-top:14px; }
+  .bar i { display:block; height:100%; width:5%; background:var(--accent); transition:width 1s; }
+  .hidden { display:none; }
+  .err { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <a href="./" style="color:var(--sub);text-decoration:none">‹ 설치 페이지</a>
+  <h1>이 아이폰 등록</h1>
+  <p class="sub">처음 설치하는 아이폰은 한 번만 등록하면 돼요.</p>
+
+  <section class="card" id="start">
+    <a class="btn" href="enroll.php">등록 프로필 받기</a>
+    <ol>
+      <li>「허용」을 누르면 프로필이 내려받아져요.</li>
+      <li><b>설정</b> 앱 맨 위의 <b>「프로필이 다운로드됨」</b>을 눌러 <b>설치</b>합니다. (암호 입력)</li>
+      <li>설치가 끝나면 이 화면으로 자동으로 돌아와 등록이 진행돼요. 기기 정보(UDID)만 보내고, 프로필은 남지 않아요.</li>
+    </ol>
+  </section>
+
+  <section class="card hidden" id="progress">
+    <div class="state"><div class="spin" id="spin"></div><span id="msg">등록 요청 중…</span></div>
+    <div class="bar"><i id="bar"></i></div>
+    <p class="sub" style="margin:12px 0 0" id="note">Apple에 기기를 등록하고 이 아이폰용으로 앱을 다시 서명하고 있어요. 보통 3~5분 걸려요. 이 화면을 켜 두세요.</p>
+  </section>
+
+  <section class="card hidden" id="done">
+    <div class="state" style="margin-bottom:14px">✅ <span>등록 완료! 이제 설치할 수 있어요.</span></div>
+    <a class="btn" href="./">설치 페이지로 가서 「이 아이폰에 바로 설치」</a>
+  </section>
+
+  <section class="card hidden" id="fail">
+    <p class="err" style="margin:0 0 12px" id="failmsg">등록하지 못했어요.</p>
+    <a class="btn secondary" href="enroll.php">다시 시도</a>
+  </section>
+</main>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var udid = q.get("udid");
+  function show(id) { ["start","progress","done","fail"].forEach(function (x) { document.getElementById(x).classList.toggle("hidden", x !== id); }); }
+  if (q.get("error")) { show("fail"); return; }
+  if (!udid) return;
+  show("progress");
+  var started = Date.now();
+  function tick() {
+    fetch("status.php?udid=" + encodeURIComponent(udid), { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        var pct = Math.min(95, 5 + (Date.now() - started) / 1000 / 240 * 90);
+        document.getElementById("bar").style.width = pct + "%";
+        var msg = document.getElementById("msg");
+        if (s.state === "ready") { show("done"); return; }
+        if (s.state === "failed" || s.state === "unknown" || s.state === "invalid") {
+          document.getElementById("failmsg").textContent = "등록하지 못했어요 (" + (s.detail || s.state) + "). 잠시 후 다시 시도해 주세요.";
+          show("fail"); return;
+        }
+        msg.textContent = s.state === "building" ? "이 아이폰용으로 서명하는 중…"
+                        : s.state === "finishing" ? "새 설치 파일을 준비하는 중…" : "등록 요청 중…";
+        setTimeout(tick, 5000);
+      })
+      .catch(function () { setTimeout(tick, 8000); });
+  }
+  tick();
+})();
+</script>
+</body>
+</html>
