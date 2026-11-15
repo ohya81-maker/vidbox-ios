@@ -11,8 +11,12 @@ final class FeedViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     private var continuation: String?
+    /// 여러 검색어를 섞은 홈: 검색어마다 다음 페이지 토큰
+    private var mixedTokens: [String] = []
     private var source: FeedSource = .search("")
     private var requestID = 0
+    /// 끝까지 내리면 추천 영상으로 계속 이어 붙일지 (시청 기록·좋아요 목록은 끔)
+    var endless = true
 
     var hasLoaded: Bool { !items.isEmpty }
 
@@ -35,6 +39,7 @@ final class FeedViewModel: ObservableObject {
             guard id == requestID else { return }
             items = page.items
             continuation = page.continuation
+            mixedTokens = []
             if page.items.isEmpty { errorMessage = "표시할 동영상이 없습니다." }
         } catch {
             guard id == requestID else { return }
@@ -85,30 +90,72 @@ final class FeedViewModel: ObservableObject {
         }
         if !mixed.isEmpty {
             items = mixed
-            continuation = pages.first?.continuation
+            mixedTokens = pages.compactMap(\.continuation)
+            continuation = mixedTokens.first
         } else if items.isEmpty {
             errorMessage = "불러오지 못했습니다."
         }
         isLoading = false
     }
 
+    /// 목록 끝에 가까워지면 다음 영상을 붙인다 — YouTube처럼 끝없이.
+    /// 1) 다음 페이지 토큰들로 이어받고  2) 더 없으면 최근에 보인 영상들의 추천(알고리즘)으로 계속 채운다
     func loadMoreIfNeeded(current item: VideoItem) async {
-        guard !isLoading, let token = continuation,
+        guard !isLoading,
               let index = items.firstIndex(where: { $0.id == item.id }),
-              index >= items.count - 4
+              index >= items.count - 6
         else { return }
         let id = requestID
         isLoading = true
-        defer { isLoading = false }
-        let page: FeedPage?
-        switch source {
-        case .search: page = try? await InnerTubeClient.shared.searchContinuation(token)
-        case .browse: page = try? await InnerTubeClient.shared.browseContinuation(token)
+        defer { if id == requestID { isLoading = false } }
+        for _ in 0..<3 {
+            let fresh = await fetchMore()
+            guard id == requestID else { return }
+            let known = Set(items.map(\.id))
+            var seen = Set<String>()
+            let added = fresh.filter { !known.contains($0.id) && seen.insert($0.id).inserted }
+            if !added.isEmpty {
+                items.append(contentsOf: added)
+                return
+            }
         }
-        guard let page, id == requestID else { return }
-        let known = Set(items.map(\.id))
-        items.append(contentsOf: page.items.filter { !known.contains($0.id) })
-        continuation = page.continuation
+    }
+
+    private func fetchMore() async -> [VideoItem] {
+        let client = InnerTubeClient.shared
+        // 여러 검색어를 섞은 홈: 각 검색어의 다음 페이지를 번갈아 섞는다
+        if !mixedTokens.isEmpty {
+            let tokens = mixedTokens
+            let pages: [FeedPage] = await withTaskGroup(of: FeedPage?.self) { group in
+                for t in tokens { group.addTask { try? await InnerTubeClient.shared.searchContinuation(t) } }
+                var out: [FeedPage] = []
+                for await page in group { if let page { out.append(page) } }
+                return out
+            }
+            mixedTokens = pages.compactMap(\.continuation)
+            var mixed: [VideoItem] = []
+            let longest = pages.map(\.items.count).max() ?? 0
+            for i in 0..<longest { for page in pages where i < page.items.count { mixed.append(page.items[i]) } }
+            if !mixed.isEmpty { return mixed }
+        } else if let token = continuation {
+            let page: FeedPage?
+            switch source {
+            case .search: page = try? await client.searchContinuation(token)
+            case .browse: page = try? await client.browseContinuation(token)
+            }
+            continuation = page?.continuation
+            if let page, !page.items.isEmpty { return page.items }
+        }
+        // 더 이어받을 페이지가 없으면: 최근 영상 두 개의 추천 목록을 섞어서 이어 붙인다
+        guard endless else { return [] }
+        let seeds = Array(items.suffix(12).shuffled().prefix(2)).map(\.id)
+        let pages: [FeedPage] = await withTaskGroup(of: FeedPage?.self) { group in
+            for seed in seeds { group.addTask { try? await InnerTubeClient.shared.related(videoID: seed) } }
+            var out: [FeedPage] = []
+            for await page in group { if let page { out.append(page) } }
+            return out
+        }
+        return pages.flatMap(\.items).shuffled()
     }
 
     func reload() async {
@@ -283,7 +330,10 @@ struct BrowseFeedScreen: View {
         .hidesTabBarOnScroll()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .task { if !model.hasLoaded { await model.load(source: .browse(browseID)) } }
+        .task {
+            model.endless = false
+            if !model.hasLoaded { await model.load(source: .browse(browseID)) }
+        }
     }
 }
 

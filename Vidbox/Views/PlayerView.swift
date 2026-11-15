@@ -166,6 +166,7 @@ struct PlayerView: View {
             ForEach(list) { item in
                 VideoRow(item: item, expand: true, queue: player.isQueueMode ? player.queue : nil)
                     .padding(.horizontal, 14)
+                    .onAppear { if !player.isQueueMode { player.loadMoreRelatedIfNeeded(current: item) } }
             }
         }
     }

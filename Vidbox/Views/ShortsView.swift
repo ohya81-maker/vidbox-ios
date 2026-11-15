@@ -185,7 +185,9 @@ final class ShortsPlayer: ObservableObject {
         slot.statusObservation = slot.player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
             let playing = observed.timeControlStatus == .playing
             Task { @MainActor in
-                guard let self, playing, self.currentID == id else { return }
+                guard let self, self.currentID == id else { return }
+                ScreenAwake.shorts = playing
+                guard playing else { return }
                 if !self.isReady {
                     self.isReady = true
                     self.showSpinner = false
@@ -296,6 +298,7 @@ final class ShortsPlayer: ObservableObject {
 
     func pause() {
         isPaused = true
+        ScreenAwake.shorts = false
         currentID.flatMap { slots[$0] }?.player.pause()
     }
 

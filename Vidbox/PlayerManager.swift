@@ -19,7 +19,9 @@ final class PlayerManager: ObservableObject {
     static let shared = PlayerManager()
 
     @Published private(set) var current: VideoItem?
-    @Published private(set) var isPlaying = false
+    @Published private(set) var isPlaying = false {
+        didSet { if oldValue != isPlaying { ScreenAwake.main = isPlaying && !audioOnly } }
+    }
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     /// 재생 위치는 0.5초마다 바뀌므로 따로 둔다 — 여기(PlayerManager)에 두면 이것을 지켜보는
@@ -31,10 +33,16 @@ final class PlayerManager: ObservableObject {
     }
     @Published private(set) var duration: Double = 0
     @Published private(set) var related: [VideoItem] = []
+    /// 추천 영상 다음 페이지 (YouTube처럼 아래로 내리면 끝없이 이어짐)
+    private var relatedToken: String?
+    private var relatedLoading = false
     @Published private(set) var queue: [VideoItem] = []
     /// 현재 재생 중인 스트림이 오디오 전용인지
     @Published private(set) var audioOnly = false {
-        didSet { if oldValue != audioOnly { updateRotationPolicy() } }
+        didSet {
+            if oldValue != audioOnly { updateRotationPolicy() }
+            ScreenAwake.main = isPlaying && !audioOnly
+        }
     }
     @Published var isExpanded = false {
         didSet {
@@ -192,11 +200,41 @@ final class PlayerManager: ObservableObject {
         beginLoading(item: item, audio: audioOnly, position: 0, autoPlay: true)
         AccountStore.shared.markWatched(item.id)
 
+        relatedToken = nil
+        relatedLoading = true
         Task { [weak self] in
-            let list = (try? await InnerTubeClient.shared.related(videoID: item.id)) ?? []
+            let page = try? await InnerTubeClient.shared.related(videoID: item.id)
             guard let self, self.current?.id == item.id else { return }
-            self.related = list
+            self.related = page?.items ?? []
+            self.relatedToken = page?.continuation
+            self.relatedLoading = false
             self.prefetchNext()
+        }
+    }
+
+    /// 추천 목록 끝에 가까워지면 다음 페이지를 붙인다. 이어받을 페이지가 없으면 마지막 영상들의 추천으로 계속 채운다.
+    func loadMoreRelatedIfNeeded(current item: VideoItem) {
+        guard !relatedLoading, let playing = current,
+              let index = related.firstIndex(where: { $0.id == item.id }),
+              index >= related.count - 5
+        else { return }
+        relatedLoading = true
+        let token = relatedToken
+        let seed = related.suffix(8).randomElement()?.id ?? playing.id
+        Task { [weak self] in
+            var page: FeedPage?
+            if let token { page = try? await InnerTubeClient.shared.relatedContinuation(token) }
+            var fromSeed = false
+            if (page?.items.isEmpty ?? true) {
+                page = try? await InnerTubeClient.shared.related(videoID: seed)
+                fromSeed = true
+            }
+            guard let self, self.current?.id == playing.id else { return }
+            self.relatedLoading = false
+            guard let page else { return }
+            let known = Set(self.related.map(\.id)).union([playing.id])
+            self.related.append(contentsOf: page.items.filter { !known.contains($0.id) })
+            self.relatedToken = page.continuation ?? (fromSeed ? nil : self.relatedToken)
         }
     }
 
@@ -307,6 +345,7 @@ final class PlayerManager: ObservableObject {
         player.replaceCurrentItem(with: nil)
         current = nil
         related = []
+        relatedToken = nil
         queue = []
         playOrder = []
         isExpanded = false
@@ -709,5 +748,16 @@ enum OrientationController {
             guard let windowScene = scene as? UIWindowScene else { continue }
             windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
         }
+    }
+}
+
+/// 영상이 재생되는 동안 화면이 꺼지지 않게 한다 (일반 재생 + 쇼츠)
+@MainActor
+enum ScreenAwake {
+    static var main = false { didSet { apply() } }
+    static var shorts = false { didSet { apply() } }
+    private static func apply() {
+        let on = main || shorts
+        if UIApplication.shared.isIdleTimerDisabled != on { UIApplication.shared.isIdleTimerDisabled = on }
     }
 }

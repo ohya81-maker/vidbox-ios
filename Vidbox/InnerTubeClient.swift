@@ -57,9 +57,30 @@ final class InnerTubeClient {
         Self.parsePage(try await post("search", body: ["continuation": token]))
     }
 
-    func related(videoID: String) async throws -> [VideoItem] {
+    /// 영상 아래 추천 목록 (첫 20개 + 다음 페이지 토큰)
+    func related(videoID: String) async throws -> FeedPage {
         let json = try await post("next", body: ["videoId": videoID])
-        return Self.parsePage(json).items.filter { $0.id != videoID }
+        let secondary = Self.dig(json, "contents", "twoColumnWatchNextResults", "secondaryResults") ?? json
+        var page = Self.parsePage(secondary)
+        page.items = page.items.filter { $0.id != videoID }
+        page.continuation = Self.lastContinuation(secondary)
+        return page
+    }
+
+    func relatedContinuation(_ token: String) async throws -> FeedPage {
+        let json = try await post("next", body: ["continuation": token])
+        var page = Self.parsePage(json)
+        page.continuation = Self.lastContinuation(json)
+        return page
+    }
+
+    /// 추천 목록의 「더 보기」 토큰은 맨 마지막에 있다 (앞쪽 토큰은 상단 필터 칩용)
+    static func lastContinuation(_ json: Any) -> String? {
+        var token: String?
+        walk(json) { key, value in
+            if key == "continuationCommand", let d = value as? [String: Any], let t = d["token"] as? String { token = t }
+        }
+        return token
     }
 
     // MARK: YouTube Kids (어린이용 콘텐츠만 나오는 별도 API)
