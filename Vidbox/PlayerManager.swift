@@ -28,7 +28,13 @@ final class PlayerManager: ObservableObject {
         didSet {
             if !isExpanded && isFullscreen { setFullscreen(false) }
             if oldValue != isExpanded { updateRotationPolicy() }
+            // 하단 재생 막대를 끈 상태에서 재생 화면을 내리면 재생을 끝낸다
+            if oldValue && !isExpanded && !miniPlayerEnabled && current != nil { stop() }
         }
+    }
+    /// 재생 화면을 내렸을 때 하단 재생 막대로 계속 재생할지 (보관함 설정, 기본 꺼짐)
+    @Published var miniPlayerEnabled: Bool = UserDefaults.standard.bool(forKey: "miniPlayer") {
+        didSet { UserDefaults.standard.set(miniPlayerEnabled, forKey: "miniPlayer") }
     }
     @Published private(set) var isFullscreen = false
     @Published var autoplay: Bool = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? true {

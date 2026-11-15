@@ -357,6 +357,14 @@ struct LibraryView: View {
                     Toggle(isOn: $player.autoplay) {
                         Label("다음 동영상 자동재생", systemImage: "infinity")
                     }
+                    Toggle(isOn: $player.miniPlayerEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("화면 내려도 계속 재생", systemImage: "rectangle.bottomhalf.inset.filled")
+                            Text("켜면 재생 화면을 내렸을 때 하단 재생 막대로 계속 재생합니다. 끄면 재생을 멈춥니다.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 } header: {
                     Text("재생 설정").font(.headline).foregroundStyle(.primary)
                 }

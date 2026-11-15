@@ -81,6 +81,7 @@ struct RootView: View {
                 player.seek(to: seek)
             }
             if defaults.bool(forKey: "ktubeCollapse") {
+                player.miniPlayerEnabled = true   // 테스트: 하단 재생 막대 화면 확인용
                 try? await Task.sleep(nanoseconds: 6_000_000_000)
                 player.isExpanded = false
             }
@@ -98,7 +99,7 @@ private struct MiniPlayerInset: ViewModifier {
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 0) {
             // 하단 재생 막대 (영상은 막대 안에서 계속 재생)
-            if player.current != nil {
+            if player.current != nil && player.miniPlayerEnabled {
                 MiniPlayerView()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
