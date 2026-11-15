@@ -146,10 +146,13 @@ for name in ("manifest.plist", "manifest.xml"):
         plistlib.dump(manifest, f)
 itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.xml", safe="")
 if signed:
-    direct = (f'<a class="btn primary" href="{itms}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이 아이폰에 바로 설치</a>'
-              '<a class="btn secondary" href="register.html">처음 설치하는 아이폰이면 → 이 아이폰 등록</a>'
-              '<p class="hint">「무결성을 확인할 수 없음」이 나오면 등록되지 않은 아이폰이에요. '
-              '위 「이 아이폰 등록」을 한 번 하면 몇 분 뒤 설치할 수 있어요.</p>')
+    # 버튼 하나: 이 기기에서 등록을 마친 적이 있으면 바로 설치, 처음이면 등록(프로필) → 자동 설치
+    direct = (f'<a class="btn primary" id="ios-install" href="register.html?auto=1" data-itms="{itms}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이 아이폰에 설치</a>'
+              '<p class="hint" id="ios-hint">처음 설치하는 아이폰은 설정에서 등록 프로필을 한 번 설치하면, 몇 분 뒤 설치 창이 자동으로 떠요.</p>'
+              f'<p class="hint"><a href="{itms}" style="color:inherit">이미 등록된 아이폰이면 여기를 눌러 바로 설치</a></p>'
+              '<script>(function(){var b=document.getElementById("ios-install");'
+              'try{if(localStorage.getItem("ktube.registered")==="1"){b.href=b.dataset.itms;'
+              'document.getElementById("ios-hint").textContent="등록된 아이폰이에요. 누르면 바로 설치돼요.";}}catch(e){}})();</script>')
 else:
     direct = ('<p class="hint">지금 올린 IPA는 서명되지 않아 바로 설치할 수 없습니다. '
               '서명된 IPA로 이 페이지를 다시 만들면 여기에 「바로 설치」 버튼이 생깁니다.</p>')

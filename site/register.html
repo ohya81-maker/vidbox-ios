@@ -38,7 +38,7 @@
   <section class="card" id="start">
     <a class="btn" href="enroll.php">등록 프로필 받기</a>
     <ol>
-      <li>「허용」을 누르면 프로필이 내려받아져요.</li>
+      <li>「이 웹 사이트에서 구성 프로파일을 다운로드하려고 합니다」가 나오면 <b>허용</b>을 누르세요.</li>
       <li><b>설정</b> 앱 맨 위의 <b>「프로필이 다운로드됨」</b>을 눌러 <b>설치</b>합니다. (암호 입력)</li>
       <li>설치가 끝나면 이 화면으로 자동으로 돌아와 등록이 진행돼요. 기기 정보(UDID)만 보내고, 프로필은 남지 않아요.</li>
     </ol>
@@ -51,8 +51,9 @@
   </section>
 
   <section class="card hidden" id="done">
-    <div class="state" style="margin-bottom:14px">✅ <span>등록 완료! 이제 설치할 수 있어요.</span></div>
-    <a class="btn" href="./">설치 페이지로 가서 「이 아이폰에 바로 설치」</a>
+    <div class="state" style="margin-bottom:14px">✅ <span>준비 완료! 설치 창에서 「설치」를 누르세요.</span></div>
+    <a class="btn" id="install">K-TUBE 설치</a>
+    <p class="sub" style="margin:12px 0 0">설치 창이 자동으로 뜨지 않으면 위 버튼을 누르세요. 설치는 홈 화면에서 진행돼요.</p>
   </section>
 
   <section class="card hidden" id="fail">
@@ -65,8 +66,15 @@
   var q = new URLSearchParams(location.search);
   var udid = q.get("udid");
   function show(id) { ["start","progress","done","fail"].forEach(function (x) { document.getElementById(x).classList.toggle("hidden", x !== id); }); }
+  var dir = location.pathname.replace(/[^\/]*$/, "");
+  var itms = "itms-services://?action=download-manifest&url=" + encodeURIComponent(location.origin + dir + "manifest.xml");
+  document.getElementById("install").href = itms;
   if (q.get("error")) { show("fail"); return; }
-  if (!udid) return;
+  // 설치 페이지의 「이 아이폰에 설치」에서 왔으면 등록 프로필을 바로 내려받는다
+  if (!udid) {
+    if (q.get("auto")) setTimeout(function () { location.href = "enroll.php"; }, 600);
+    return;
+  }
   show("progress");
   var started = Date.now();
   function tick() {
@@ -76,7 +84,12 @@
         var pct = Math.min(95, 5 + (Date.now() - started) / 1000 / 240 * 90);
         document.getElementById("bar").style.width = pct + "%";
         var msg = document.getElementById("msg");
-        if (s.state === "ready") { show("done"); return; }
+        if (s.state === "ready") {
+          try { localStorage.setItem("ktube.registered", "1"); } catch (e) {}
+          show("done");
+          location.href = itms;   // 설치 창 바로 띄우기
+          return;
+        }
         if (s.state === "failed" || s.state === "unknown" || s.state === "invalid") {
           document.getElementById("failmsg").textContent = "등록하지 못했어요 (" + (s.detail || s.state) + "). 잠시 후 다시 시도해 주세요.";
           show("fail"); return;
