@@ -217,6 +217,14 @@ struct VideoSurface: UIViewRepresentable {
     /// 쇼츠처럼 별도 플레이어를 쓸 때
     var avPlayer: AVPlayer? = nil
     var gravity: AVLayerVideoGravity = .resizeAspect
+    /// 첫 프레임이 실제로 화면에 그려졌는지 (쇼츠: 그 전까지 썸네일을 보여 준다)
+    var onReadyForDisplay: ((Bool, AVPlayer?) -> Void)? = nil
+
+    final class Coordinator {
+        var observation: NSKeyValueObservation?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> PlayerUIView {
         let view = PlayerUIView()
@@ -226,6 +234,13 @@ struct VideoSurface: UIViewRepresentable {
             manager.register(view.playerLayer)
         } else {
             view.playerLayer.player = avPlayer
+        }
+        if let onReadyForDisplay {
+            context.coordinator.observation = view.playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { layer, _ in
+                let ready = layer.isReadyForDisplay
+                let shown = layer.player
+                DispatchQueue.main.async { onReadyForDisplay(ready, shown) }
+            }
         }
         return view
     }

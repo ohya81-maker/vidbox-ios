@@ -78,6 +78,7 @@ final class ShortsPlayer: ObservableObject {
     private var endObserver: NSObjectProtocol?
     private var task: Task<Void, Never>?
     private var statusObservation: NSKeyValueObservation?
+    private var watchdog: Task<Void, Never>?
 
     /// 미리 준비한 플레이어 (영상 ID → 플레이어)
     private var standby: [String: AVPlayer] = [:]
@@ -96,14 +97,41 @@ final class ShortsPlayer: ObservableObject {
     /// 화면에 붙일 플레이어 교체 + 상태 관찰
     private func attach(_ p: AVPlayer) {
         player = p
-        statusObservation = p.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] observed, _ in
-            let playing = observed.timeControlStatus == .playing
-            Task { @MainActor in
-                guard let self, self.player === observed else { return }
-                if playing { self.isReady = true }
+        // 재생 상태가 아니라 '첫 프레임이 화면에 그려졌는지'로 준비 완료를 판단한다
+        // (재생 중이라도 프레임이 없으면 검은 화면 대신 썸네일과 로딩 표시를 유지)
+        statusObservation = nil
+        loop(p.currentItem)
+    }
+
+    /// 화면(AVPlayerLayer)이 첫 프레임을 그렸을 때 불린다
+    func displayChanged(_ ready: Bool, player shown: AVPlayer?) {
+        guard shown === player else { return }
+        if ready { isReady = true }
+    }
+
+    /// 일정 시간 안에 화면이 안 나오면 새로 받아 한 번 더 시도, 그래도 안 되면 실패 표시
+    private func armWatchdog(for id: String) {
+        watchdog?.cancel()
+        watchdog = Task { [weak self] in
+            for attempt in 0..<2 {
+                try? await Task.sleep(for: .seconds(attempt == 0 ? 7 : 10))
+                guard !Task.isCancelled, let self, self.currentID == id else { return }
+                if self.isReady || self.isPaused { return }
+                if attempt == 0 {
+                    // 대기 플레이어나 첫 스트림이 멈춘 경우: 새 플레이어로 다시 받는다
+                    let fresh = Self.makePlayer()
+                    self.attach(fresh)
+                    if let playerItem = try? await PlayerManager.loadItem(id: id, audioOnly: false),
+                       !Task.isCancelled, self.currentID == id {
+                        fresh.replaceCurrentItem(with: playerItem)
+                        self.loop(playerItem)
+                        fresh.play()
+                    }
+                } else {
+                    self.failed = true
+                }
             }
         }
-        loop(p.currentItem)
     }
 
     /// 끝나면 처음으로 되감아 반복
@@ -132,6 +160,7 @@ final class ShortsPlayer: ObservableObject {
         task?.cancel()
         player.pause()
         PlayerManager.shared.activateAudioSession()
+        armWatchdog(for: item.id)
 
         // 미리 준비해 둔 플레이어가 있으면 바로 교체
         if let ready = standby.removeValue(forKey: item.id) {
@@ -326,8 +355,10 @@ struct ShortPage: View {
                         .clipped()
 
                     if isCurrent {
-                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect)
-                            .opacity(shorts.isReady ? 1 : 0)
+                        VideoSurface(avPlayer: shorts.player, gravity: .resizeAspect) { ready, shown in
+                            shorts.displayChanged(ready, player: shown)
+                        }
+                        .opacity(shorts.isReady ? 1 : 0.01)
                         if !shorts.isReady && !shorts.failed {
                             ProgressView().tint(.white)
                         }
