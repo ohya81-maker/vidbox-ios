@@ -82,6 +82,9 @@ final class ShortsPlayer: ObservableObject {
     private var task: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
     private var statusObservation: NSKeyValueObservation?
+    /// 다음 쇼츠용으로 미리 만든 재생 항목 (영상 데이터는 받지 않고 재생목록만 받아 둠)
+    private var warmed: [String: AVPlayerItem] = [:]
+    private var warming: [String: Task<Void, Never>] = [:]
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = true
@@ -120,8 +123,12 @@ final class ShortsPlayer: ObservableObject {
         task?.cancel()
         task = Task { [weak self] in
             do {
-                let playerItem = try await PlayerManager.loadItem(id: id, audioOnly: false)
+                // 미리 만들어 둔 항목(재생목록까지 받아 둠)이 있으면 그것을, 없으면 새로
+                let ready = self?.warmed.removeValue(forKey: id)
+                let playerItem: AVPlayerItem
+                if let ready { playerItem = ready } else { playerItem = try await PlayerManager.loadItem(id: id, audioOnly: false) }
                 guard !Task.isCancelled, let self, self.currentID == id else { return }
+                Self.tuneForQuickStart(playerItem)
                 // HLS도 반복되도록 끝나면 처음으로 되감기
                 if let old = self.endObserver { NotificationCenter.default.removeObserver(old) }
                 self.endObserver = NotificationCenter.default.addObserver(
@@ -170,10 +177,30 @@ final class ShortsPlayer: ObservableObject {
         player.pause()
     }
 
-    /// 다음 쇼츠들의 스트림 주소만 미리 풀어 둔다 (영상 데이터는 받지 않아 지금 영상과 대역폭을 다투지 않음)
+    /// 쇼츠는 짧고 화면이 작다: 2초만 받아 두면 바로 시작, 화질은 720p까지만
+    /// (기본값은 몇 초~십수 초를 미리 받고 1080p를 고르기도 해 첫 재생이 늦었다)
+    static func tuneForQuickStart(_ item: AVPlayerItem) {
+        item.preferredForwardBufferDuration = 2
+        item.preferredMaximumResolution = CGSize(width: 720, height: 1280)
+    }
+
+    /// 다음 쇼츠들: 스트림 주소를 풀고 재생 항목을 만들어 HLS 재생목록까지 받아 둔다.
+    /// 영상 조각은 받지 않으므로 지금 보는 쇼츠의 대역폭을 뺏지 않는다
     func prefetch(_ items: [VideoItem]) {
-        let ids = items.map(\.id)
-        Task { await StreamResolver.shared.prefetch(ids) }
+        let keep = Set(items.map(\.id))
+        for id in warmed.keys where !keep.contains(id) { warmed[id] = nil }
+        for (id, t) in warming where !keep.contains(id) { t.cancel(); warming[id] = nil }
+        for item in items where warmed[item.id] == nil && warming[item.id] == nil && item.id != currentID {
+            let id = item.id
+            warming[id] = Task { [weak self] in
+                defer { self?.warming[id] = nil }
+                guard let playerItem = try? await PlayerManager.loadItem(id: id, audioOnly: false),
+                      !Task.isCancelled else { return }
+                _ = try? await playerItem.asset.load(.isPlayable)
+                guard !Task.isCancelled, let self, self.currentID != id else { return }
+                self.warmed[id] = playerItem
+            }
+        }
     }
 }
 
