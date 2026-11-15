@@ -65,88 +65,38 @@ final class ShortsFeed: ObservableObject {
 
 // MARK: - 쇼츠 전용 플레이어 (반복 재생)
 //
-// 다음 쇼츠 2개는 대기용 플레이어에 미리 넣어 두어 앞부분을 받아 둔다.
-// 넘기면 대기 플레이어를 그대로 화면에 붙이므로 바로 재생된다.
+// 플레이어 하나를 계속 화면에 붙여 두고 영상만 바꾼다.
+// (1.8.0~1.8.9는 다음 쇼츠마다 대기 플레이어를 따로 만들어 미리 받아 두었는데,
+//  넘길 때마다 화면에 붙은 플레이어가 통째로 바뀌어 검은 화면이 깜빡였고,
+//  대기 플레이어 2개가 지금 영상과 동시에 받느라 시작이 오히려 늦어졌다)
+// 다음 쇼츠는 스트림 주소만 미리 풀어 두어(가벼움) 넘기면 바로 받기 시작한다.
 
 @MainActor
 final class ShortsPlayer: ObservableObject {
-    @Published private(set) var player = AVPlayer()
+    let player = AVPlayer()
     @Published private(set) var isReady = false
     @Published private(set) var isPaused = false
     @Published private(set) var failed = false
     private(set) var currentID: String?
     private var endObserver: NSObjectProtocol?
     private var task: Task<Void, Never>?
-    private var statusObservation: NSKeyValueObservation?
     private var watchdog: Task<Void, Never>?
-
-    /// 미리 준비한 플레이어 (영상 ID → 플레이어)
-    private var standby: [String: AVPlayer] = [:]
-    private var preparing: [String: Task<Void, Never>] = [:]
+    private var statusObservation: NSKeyValueObservation?
 
     init() {
-        attach(player)
+        player.automaticallyWaitsToMinimizeStalling = true
+        statusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
+            let playing = observed.timeControlStatus == .playing
+            Task { @MainActor in
+                if playing { self?.isReady = true }
+            }
+        }
     }
 
-    private static func makePlayer(_ item: AVPlayerItem? = nil) -> AVPlayer {
-        let p = AVPlayer(playerItem: item)
-        p.automaticallyWaitsToMinimizeStalling = true
-        return p
-    }
-
-    /// 화면에 붙일 플레이어 교체 + 상태 관찰
-    private func attach(_ p: AVPlayer) {
-        player = p
-        // 재생 상태가 아니라 '첫 프레임이 화면에 그려졌는지'로 준비 완료를 판단한다
-        // (재생 중이라도 프레임이 없으면 검은 화면 대신 썸네일과 로딩 표시를 유지)
-        statusObservation = nil
-        loop(p.currentItem)
-    }
-
-    /// 화면(AVPlayerLayer)이 첫 프레임을 그렸을 때 불린다
+    /// 화면이 첫 프레임을 그렸을 때 (재생 시작 신호를 놓친 경우의 보조)
     func displayChanged(_ ready: Bool, player shown: AVPlayer?) {
-        guard shown === player else { return }
-        if ready { isReady = true }
-    }
-
-    /// 일정 시간 안에 화면이 안 나오면 새로 받아 한 번 더 시도, 그래도 안 되면 실패 표시
-    private func armWatchdog(for id: String) {
-        watchdog?.cancel()
-        watchdog = Task { [weak self] in
-            for attempt in 0..<2 {
-                try? await Task.sleep(for: .seconds(attempt == 0 ? 7 : 10))
-                guard !Task.isCancelled, let self, self.currentID == id else { return }
-                if self.isReady || self.isPaused { return }
-                if attempt == 0 {
-                    // 대기 플레이어나 첫 스트림이 멈춘 경우: 새 플레이어로 다시 받는다
-                    let fresh = Self.makePlayer()
-                    self.attach(fresh)
-                    if let playerItem = try? await PlayerManager.loadItem(id: id, audioOnly: false),
-                       !Task.isCancelled, self.currentID == id {
-                        fresh.replaceCurrentItem(with: playerItem)
-                        self.loop(playerItem)
-                        fresh.play()
-                    }
-                } else {
-                    self.failed = true
-                }
-            }
-        }
-    }
-
-    /// 끝나면 처음으로 되감아 반복
-    private func loop(_ item: AVPlayerItem?) {
-        if let old = endObserver { NotificationCenter.default.removeObserver(old) }
-        endObserver = nil
-        guard let item else { return }
-        endObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.player.seek(to: .zero)
-                self?.player.play()
-            }
-        }
+        guard shown === player, ready, player.currentItem != nil, player.timeControlStatus == .playing else { return }
+        isReady = true
     }
 
     func play(_ item: VideoItem) {
@@ -155,46 +105,53 @@ final class ShortsPlayer: ObservableObject {
             return
         }
         currentID = item.id
+        isReady = false
         isPaused = false
         failed = false
         task?.cancel()
         player.pause()
+        player.replaceCurrentItem(with: nil)
         PlayerManager.shared.activateAudioSession()
+        load(item.id)
         armWatchdog(for: item.id)
+    }
 
-        // 미리 준비해 둔 플레이어가 있으면 바로 교체
-        if let ready = standby.removeValue(forKey: item.id) {
-            isReady = false
-            attach(ready)
-            ready.seek(to: .zero)
-            ready.play()
-            return
-        }
-        // 준비 중이면 끝나기를 기다렸다가, 아니면 새로 만든다
-        isReady = false
-        let fresh = Self.makePlayer()
-        attach(fresh)
-        let pending = preparing[item.id]
+    private func load(_ id: String) {
+        task?.cancel()
         task = Task { [weak self] in
-            if let pending {
-                await pending.value
-                guard !Task.isCancelled, let self, self.currentID == item.id else { return }
-                if let ready = self.standby.removeValue(forKey: item.id) {
-                    self.attach(ready)
-                    ready.play()
-                    return
-                }
-            }
             do {
-                let playerItem = try await PlayerManager.loadItem(id: item.id, audioOnly: false)
-                guard !Task.isCancelled, let self, self.currentID == item.id else { return }
+                let playerItem = try await PlayerManager.loadItem(id: id, audioOnly: false)
+                guard !Task.isCancelled, let self, self.currentID == id else { return }
+                // HLS도 반복되도록 끝나면 처음으로 되감기
+                if let old = self.endObserver { NotificationCenter.default.removeObserver(old) }
+                self.endObserver = NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.player.seek(to: .zero)
+                        self?.player.play()
+                    }
+                }
                 self.player.replaceCurrentItem(with: playerItem)
-                self.loop(playerItem)
-                self.player.play()
+                if !self.isPaused { self.player.play() }
             } catch {
-                guard !Task.isCancelled, let self, self.currentID == item.id else { return }
+                guard !Task.isCancelled, let self, self.currentID == id else { return }
                 self.failed = true
             }
+        }
+    }
+
+    /// 8초 안에 재생이 시작되지 않으면 한 번 새로 받아 보고, 그래도 안 되면 실패 표시
+    private func armWatchdog(for id: String) {
+        watchdog?.cancel()
+        watchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled, let self, self.currentID == id, !self.isReady, !self.isPaused, !self.failed else { return }
+            self.player.replaceCurrentItem(with: nil)
+            self.load(id)
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, self.currentID == id, !self.isReady, !self.isPaused else { return }
+            self.failed = true
         }
     }
 
@@ -213,29 +170,10 @@ final class ShortsPlayer: ObservableObject {
         player.pause()
     }
 
-    /// 다음 쇼츠들을 대기 플레이어에 미리 넣어 앞부분을 받아 둔다 (그 밖의 대기 플레이어는 정리)
+    /// 다음 쇼츠들의 스트림 주소만 미리 풀어 둔다 (영상 데이터는 받지 않아 지금 영상과 대역폭을 다투지 않음)
     func prefetch(_ items: [VideoItem]) {
-        let keep = Set(items.map(\.id))
-        for (id, p) in standby where !keep.contains(id) {
-            p.replaceCurrentItem(with: nil)
-            standby[id] = nil
-        }
-        for (id, t) in preparing where !keep.contains(id) {
-            t.cancel()
-            preparing[id] = nil
-        }
-        for item in items where standby[item.id] == nil && preparing[item.id] == nil && item.id != currentID {
-            let id = item.id
-            preparing[id] = Task { [weak self] in
-                guard let playerItem = try? await PlayerManager.loadItem(id: id, audioOnly: false),
-                      !Task.isCancelled, let self else { self?.preparing[id] = nil; return }
-                let p = Self.makePlayer(playerItem)
-                p.isMuted = false
-                p.pause()               // 재생하지 않고 앞부분만 받아 둔다
-                self.standby[id] = p
-                self.preparing[id] = nil
-            }
-        }
+        let ids = items.map(\.id)
+        Task { await StreamResolver.shared.prefetch(ids) }
     }
 }
 
