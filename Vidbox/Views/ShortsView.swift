@@ -492,6 +492,8 @@ struct ShortsView: View {
         let previous = index > 0 ? feed.items[index - 1].id : nil
         let upcoming = feed.items.dropFirst(index + 1).prefix(4).map(\.id)
         shorts.play(feed.items[index], previous: previous, upcoming: upcoming)
+        // 채널 이름·구독 버튼: 지금 것과 다음 두 개를 미리 받아 둔다 (넘기자마자 바로 보이게)
+        ShortInfoCache.shared.prefetch([id] + upcoming.prefix(2))
         feed.markSeen(id)
     }
 }
@@ -575,12 +577,10 @@ struct ShortPage: View {
         .contentShape(Rectangle())
         .onTapGesture { if isCurrent { shorts.togglePause() } }
         .task(id: isCurrent) {
-            guard isCurrent, info == nil else { return }
+            guard info == nil else { return }
             if let cached = ShortInfoCache.shared.get(item.id) { info = cached; return }
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard isCurrent, let got = try? await InnerTubeClient.shared.relatedWithInfo(videoID: item.id).1 else { return }
-            ShortInfoCache.shared.set(item.id, got)
-            info = got
+            guard isCurrent else { return }
+            if let got = await ShortInfoCache.shared.load(item.id) { info = got }
         }
         .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
         .overlay(alignment: .bottom) {
@@ -660,9 +660,29 @@ struct ShortPage: View {
 final class ShortInfoCache {
     static let shared = ShortInfoCache()
     private var map: [String: WatchInfo] = [:]
+    private var pending: [String: Task<WatchInfo?, Never>] = [:]
     func get(_ id: String) -> WatchInfo? { map[id] }
     func set(_ id: String, _ info: WatchInfo) {
         if map.count > 300 { map.removeAll() }
         map[id] = info
+    }
+    /// 받는 중이면 그 결과를 같이 기다린다 (같은 쇼츠를 두 번 묻지 않게)
+    func load(_ id: String) async -> WatchInfo? {
+        if let v = map[id] { return v }
+        if let t = pending[id] { return await t.value }
+        let t = Task<WatchInfo?, Never> {
+            guard let r = try? await InnerTubeClient.shared.relatedWithInfo(videoID: id) else { return nil }
+            return r.1
+        }
+        pending[id] = t
+        let v = await t.value
+        pending[id] = nil
+        if let v { set(id, v) }
+        return v
+    }
+    func prefetch(_ ids: [String]) {
+        for id in ids where map[id] == nil && pending[id] == nil {
+            Task { _ = await load(id) }
+        }
     }
 }

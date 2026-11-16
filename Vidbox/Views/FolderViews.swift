@@ -207,6 +207,7 @@ struct FolderDetailView: View {
     @State private var showRename = false
     @State private var newName = ""
     @State private var confirmDelete = false
+    @State private var pendingRemove: IndexSet?
 
     private var name: String {
         switch ref {
@@ -290,15 +291,17 @@ struct FolderDetailView: View {
                 ForEach(items) { item in
                     VideoRow(item: item, queue: items)
                 }
-                .onDelete { offsets in
-                    switch ref {
-                    case .watchLater: library.removeSaved(at: offsets)
-                    case .playlist(let id): library.removeItems(at: offsets, from: id)
-                    }
-                }
+                .onDelete { pendingRemove = $0 }
             }
         }
         .listStyle(.plain)
+        .deleteConfirmation("폴더에서 뺄까요?", message: "선택한 영상이 '\(name)' 폴더에서 빠져요.",
+                            button: "빼기", pending: $pendingRemove) { offsets in
+            switch ref {
+            case .watchLater: library.removeSaved(at: offsets)
+            case .playlist(let id): library.removeItems(at: offsets, from: id)
+            }
+        }
         .navigationTitle(name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
@@ -324,6 +327,7 @@ struct FolderDetailView: View {
                 if case .playlist(let id) = ref { library.deletePlaylist(id) }
                 dismiss()
             }
+            Button("취소", role: .cancel) {}
         } message: {
             Text("폴더 안의 영상 목록도 함께 지워집니다.")
         }

@@ -84,6 +84,7 @@ struct RootView: View {
         .task { await runLaunchHooks() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             FullScreenLock.apply()
+            Task { await AppUpdate.shared.check() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             FullScreenLock.apply()

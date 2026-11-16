@@ -10,6 +10,8 @@ struct PlayerView: View {
     @State private var showDescription = false
     @State private var showSave = false
     @State private var showDownload = false
+    /// 다운로드한 파일 삭제 전 확인
+    @State private var pendingDeleteFile: DownloadedFile?
     @State private var relatedFilter = 0
     @State private var showComments = false
     @State private var navPath = NavigationPath()
@@ -384,7 +386,15 @@ struct PlayerView: View {
                 .confirmationDialog("다운로드", isPresented: $showDownload, titleVisibility: .visible) {
                     downloadButtons(item)
                 } message: {
-                    Text("받아 두면 인터넷 없이 재생할 수 있어요. 보관함 → 오프라인 저장에서 볼 수 있습니다.")
+                    Text("받아 두면 인터넷 없이 재생할 수 있어요.")
+                }
+                .confirmationDialog("다운로드한 파일을 삭제할까요?", isPresented: Binding(
+                    get: { pendingDeleteFile != nil }, set: { if !$0 { pendingDeleteFile = nil } }
+                ), titleVisibility: .visible, presenting: pendingDeleteFile) { file in
+                    Button("삭제", role: .destructive) { DownloadManager.shared.delete(file) }
+                    Button("취소", role: .cancel) {}
+                } message: { _ in
+                    Text("기기에서 지워져요. 다시 보려면 다시 받아야 해요.")
                 }
             }
             iconButton("infinity", label: "자동재생", tint: player.autoplay ? .accentColor : nil) {
@@ -422,7 +432,7 @@ struct PlayerView: View {
         ForEach([DownloadKind.video, .audio], id: \.self) { kind in
             let title = kind == .video ? "영상 (소리 포함, 720p)" : "음원만 (m4a)"
             if let file = downloads.file(item.id, kind) {
-                Button("\(kind.label) 삭제", role: .destructive) { downloads.delete(file) }
+                Button("\(kind.label) 삭제", role: .destructive) { pendingDeleteFile = file }
             } else if downloads.isDownloading(item.id, kind) {
                 Button("\(kind.label) 다운로드 취소", role: .destructive) { downloads.cancel(item.id, kind) }
             } else {
@@ -1178,6 +1188,7 @@ struct CommentsPanel: View {
         defer { sending = false }
         do {
             try await InnerTubeClient.shared.postComment(text, params: params)
+            if let video = PlayerManager.shared.current { CommentLog.shared.add(video, text) }
             comments.insert(Comment(id: UUID().uuidString, author: account.handle ?? account.name ?? "나",
                                     avatar: account.avatar, text: text, published: "방금 전"), at: 0)
             draft = ""

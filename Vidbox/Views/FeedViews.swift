@@ -240,7 +240,8 @@ struct HomeView: View {
     @StateObject private var model = FeedViewModel()
     @EnvironmentObject private var account: AccountStore
     @State private var selected = 0
-    @State private var showLibrary = false
+    @State private var path = NavigationPath()
+    @ObservedObject private var update = AppUpdate.shared
 
     private let chips: [(title: String, query: String)] = [
         ("전체", "인기 동영상"),
@@ -259,7 +260,7 @@ struct HomeView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(spacing: 0) {
                     header
@@ -281,7 +282,7 @@ struct HomeView: View {
             .hidesTabBarOnScroll()
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }
-            .navigationDestination(isPresented: $showLibrary) { LibraryView() }
+            .profileDestinations()
             .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
             .channelDestination()
         }
@@ -333,13 +334,21 @@ struct HomeView: View {
             // YouTube처럼 맨 위 오른쪽에 돋보기 아이콘
             SearchIconButton()
             // 보관함 (계정·시청 기록·저장한 동영상·설정)
-            Button { showLibrary = true } label: {
-                if account.isLoggedIn {
-                    AvatarView(url: account.avatar, size: 30)
-                } else {
-                    Image(systemName: "person.crop.circle")
-                        .font(.system(size: 24, weight: .regular))
-                        .foregroundStyle(.primary)
+            Button { path.append(ProfileRoute.library) } label: {
+                Group {
+                    if account.isLoggedIn {
+                        AvatarView(url: account.avatar, size: 30)
+                    } else {
+                        Image(systemName: "person.crop.circle")
+                            .font(.system(size: 24, weight: .regular))
+                            .foregroundStyle(.primary)
+                    }
+                }
+                // 새 버전이 있으면 작은 빨간 점
+                .overlay(alignment: .topTrailing) {
+                    if update.available {
+                        Circle().fill(.red).frame(width: 9, height: 9).offset(x: 2, y: -2)
+                    }
                 }
             }
             .buttonStyle(.plain)
@@ -388,213 +397,5 @@ struct BrowseFeedScreen: View {
             model.endless = false
             if !model.hasLoaded { await model.load(source: .browse(browseID)) }
         }
-    }
-}
-
-// MARK: - 보관함
-
-struct LibraryView: View {
-    @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var player: PlayerManager
-    @EnvironmentObject private var account: AccountStore
-    @State private var showLogin = false
-    @State private var confirmLogout = false
-    @ObservedObject private var downloads = DownloadManager.shared
-
-    /// 홈 화면 안으로 밀어 넣어(push) 보여주므로 자체 NavigationStack은 없다
-    var body: some View {
-            List {
-                accountSection
-
-                // 바로가기: 큰 타일로 한눈에
-                Section {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
-                        if account.isLoggedIn {
-                            tile("시청 기록", "clock.arrow.circlepath", .indigo) {
-                                BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory")
-                            }
-                            tile("구독 새 영상", "play.square.stack.fill", .red) {
-                                BrowseFeedScreen(title: "구독", browseID: "FEsubscriptions")
-                            }
-                            tile("좋아요", "hand.thumbsup.fill", .blue) {
-                                BrowseFeedScreen(title: "좋아요 표시한 동영상", browseID: "VLLL")
-                            }
-                        }
-                        tile("오프라인 저장", "arrow.down.circle.fill", .green, count: downloads.files.count) {
-                            DownloadsView()
-                        }
-                        tile("나중에 볼 동영상", "clock.fill", .orange, count: library.saved.count) {
-                            SavedVideosScreen()
-                        }
-                    }
-                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                }
-
-                if !library.history.isEmpty {
-                    Section {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(alignment: .top, spacing: 12) {
-                                ForEach(library.history.prefix(20)) { item in
-                                    Button { player.play(item) } label: {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            ThumbnailView(url: item.bestThumbnail, duration: item.duration, cornerRadius: 10)
-                                                .frame(width: 150)
-                                            Text(item.title)
-                                                .font(.caption.weight(.medium))
-                                                .lineLimit(2)
-                                                .frame(width: 150, alignment: .leading)
-                                            Text(item.channel)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                        }
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                    } header: {
-                        HStack {
-                            Text("이 기기에서 본 동영상").font(.headline).foregroundStyle(.primary)
-                            Spacer()
-                            Button("모두 지우기") { library.clearHistory() }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section {
-                    Toggle(isOn: $player.autoplay) {
-                        settingLabel("다음 동영상 자동재생", "infinity", .purple)
-                    }
-                    Toggle(isOn: $player.miniPlayerEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            settingLabel("화면 내려도 계속 재생", "rectangle.bottomhalf.inset.filled", .teal)
-                            Text("끄면 재생 화면을 내릴 때 재생을 멈춰요.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 40)
-                        }
-                    }
-                    Toggle(isOn: $player.audioOnlyPreference) {
-                        settingLabel("기본으로 오디오 전용 재생", "headphones", .pink)
-                    }
-                } header: {
-                    Text("재생 설정").font(.headline).foregroundStyle(.primary)
-                }
-                .tint(.green)
-
-                BlockedChannelsSection()
-            }
-            .listStyle(.insetGrouped)
-            .hidesTabBarOnScroll()
-            .navigationTitle("보관함")
-            .toolbar(.visible, for: .navigationBar)
-            .sheet(isPresented: $showLogin) { LoginView() }
-            .confirmationDialog("로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {
-                Button("로그아웃", role: .destructive) { account.logout() }
-            }
-    }
-
-    private func tile<Dest: View>(_ title: String, _ icon: String, _ color: Color, count: Int? = nil,
-                                  @ViewBuilder destination: @escaping () -> Dest) -> some View {
-        NavigationLink {
-            destination()
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(color.gradient, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    Spacer()
-                    if let count, count > 0 {
-                        Text("\(count)").font(.subheadline.weight(.bold)).foregroundStyle(.secondary)
-                    }
-                }
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func settingLabel(_ title: String, _ icon: String, _ color: Color) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(color.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            Text(title)
-        }
-    }
-
-    @ViewBuilder
-    private var accountSection: some View {
-        Section {
-            if account.isLoggedIn {
-                HStack(spacing: 14) {
-                    AvatarView(url: account.avatar, size: 54)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(account.name ?? "YouTube 계정").font(.headline)
-                        if let handle = account.handle {
-                            Text(handle).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                    Button("로그아웃") { confirmLogout = true }
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .buttonStyle(.borderless)
-                }
-                .padding(.vertical, 4)
-            } else {
-                Button { showLogin = true } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("YouTube 계정으로 로그인").font(.headline)
-                            Text("내 시청 기록·구독·추천을 그대로 가져옵니다")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-
-/// 나중에 볼 동영상 (보관함 타일에서)
-struct SavedVideosScreen: View {
-    @EnvironmentObject private var library: LibraryStore
-    var body: some View {
-        List {
-            if library.saved.isEmpty {
-                Text("저장한 동영상이 없어요").foregroundStyle(.secondary)
-            }
-            ForEach(library.saved) { item in
-                VideoRow(item: item)
-            }
-            .onDelete { library.removeSaved(at: $0) }
-        }
-        .listStyle(.plain)
-        .navigationTitle("나중에 볼 동영상")
-        .toolbar(.visible, for: .navigationBar)
     }
 }

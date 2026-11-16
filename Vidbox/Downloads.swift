@@ -329,6 +329,7 @@ struct DownloadsView: View {
     @EnvironmentObject private var player: PlayerManager
     @State private var filter: DownloadKind?
     @State private var pickFolder = false
+    @State private var pendingDelete: IndexSet?
 
     private var shown: [DownloadedFile] {
         downloads.files.filter { filter == nil || $0.kind == filter }
@@ -385,11 +386,15 @@ struct DownloadsView: View {
             ForEach(shown) { file in
                 row(file)
             }
-            .onDelete { offsets in
-                for i in offsets { downloads.delete(shown[i]) }
-            }
+            .onDelete { pendingDelete = $0 }
         }
         .listStyle(.plain)
+        .deleteConfirmation("다운로드한 파일을 삭제할까요?",
+                            message: "기기에서 지워져요. 다시 보려면 인터넷으로 재생하거나 다시 받아야 해요.",
+                            pending: $pendingDelete) { offsets in
+            let list = shown
+            for i in offsets where i < list.count { downloads.delete(list[i]) }
+        }
         .navigationTitle("오프라인 저장")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

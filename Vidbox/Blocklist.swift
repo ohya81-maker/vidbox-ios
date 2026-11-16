@@ -98,18 +98,18 @@ final class Blocklist: ObservableObject, @unchecked Sendable {
     }
 }
 
-// MARK: - 보관함의 「차단한 채널」 (기본 접힘)
+// MARK: - 보관함의 「차단한 채널」 (댓글 창처럼 아래에서 올라와 바로 보인다)
 
-struct BlockedChannelsSection: View {
+struct BlockedChannelsSheet: View {
     @ObservedObject private var blocklist = Blocklist.shared
-    @State private var expanded = false
+    @Environment(\.dismiss) private var dismiss
     @State private var pendingRemove: BlockRule?
     @State private var showAdd = false
     @State private var newKeyword = ""
 
     var body: some View {
-        Section {
-            DisclosureGroup(isExpanded: $expanded) {
+        NavigationStack {
+            List {
                 if blocklist.rules.isEmpty {
                     Text("차단한 채널이 없어요").font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -127,52 +127,48 @@ struct BlockedChannelsSection: View {
                                 .font(.footnote.weight(.semibold))
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 6)
-                                .background(Color(.tertiarySystemFill), in: Capsule())
+                                .background(Color.primary.opacity(0.08), in: Capsule())
                         }
                         .buttonStyle(.plain)
                     }
                     .padding(.vertical, 2)
                 }
-                Button { newKeyword = ""; showAdd = true } label: {
-                    Label("채널 이름으로 차단 추가", systemImage: "plus.circle.fill")
-                        .font(.subheadline.weight(.medium))
-                }
-                .buttonStyle(.borderless)
-                .tint(.red)
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 30, height: 30)
-                        .background(Color.red.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("차단한 채널").font(.body.weight(.semibold))
-                        Text("\(blocklist.rules.count)개 · 어디에도 나오지 않고 재생되지 않아요")
-                            .font(.caption).foregroundStyle(.secondary)
+            }
+            .listStyle(.plain)
+            .navigationTitle("차단한 채널 \(blocklist.rules.count)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { newKeyword = ""; showAdd = true } label: {
+                        Image(systemName: "plus")
                     }
+                    .accessibilityLabel("채널 이름으로 차단 추가")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("완료") { dismiss() }
                 }
             }
-            .tint(.secondary)
-        }
-        .confirmationDialog("차단을 해제할까요?", isPresented: Binding(
-            get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }
-        ), titleVisibility: .visible, presenting: pendingRemove) { rule in
-            Button("'\(rule.name)' 차단 해제", role: .destructive) {
-                withAnimation { blocklist.unblock(rule) }
+            .confirmationDialog("차단을 해제할까요?", isPresented: Binding(
+                get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }
+            ), titleVisibility: .visible, presenting: pendingRemove) { rule in
+                Button("'\(rule.name)' 차단 해제", role: .destructive) {
+                    withAnimation { blocklist.unblock(rule) }
+                }
+                Button("취소", role: .cancel) {}
+            } message: { rule in
+                Text(rule.keyword ? "이름에 '\(rule.name)'이(가) 들어간 채널의 영상이 다시 보이게 돼요."
+                                  : "'\(rule.name)' 채널의 영상이 다시 보이게 돼요.")
             }
-            Button("취소", role: .cancel) {}
-        } message: { rule in
-            Text(rule.keyword ? "이름에 '\(rule.name)'이(가) 들어간 채널의 영상이 다시 보이게 돼요."
-                              : "'\(rule.name)' 채널의 영상이 다시 보이게 돼요.")
+            .alert("채널 이름으로 차단", isPresented: $showAdd) {
+                TextField("채널 이름(일부)", text: $newKeyword)
+                Button("차단") { withAnimation { blocklist.blockKeyword(newKeyword) } }
+                Button("취소", role: .cancel) {}
+            } message: {
+                Text("이름에 이 글자가 들어간 채널을 모두 막아요.")
+            }
         }
-        .alert("채널 이름으로 차단", isPresented: $showAdd) {
-            TextField("채널 이름(일부)", text: $newKeyword)
-            Button("차단") { withAnimation { blocklist.blockKeyword(newKeyword) } }
-            Button("취소", role: .cancel) {}
-        } message: {
-            Text("이름에 이 글자가 들어간 채널을 모두 막아요.")
-        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder
@@ -182,15 +178,8 @@ struct BlockedChannelsSection: View {
         } else {
             Text(String(rule.name.prefix(1)))
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(.white)
                 .frame(width: 36, height: 36)
-                .background(Color.gray.gradient, in: Circle())
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "nosign")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.red)
-                        .background(Circle().fill(Color(.systemBackground)).padding(-1))
-                }
+                .background(Color.primary.opacity(0.08), in: Circle())
         }
     }
 }

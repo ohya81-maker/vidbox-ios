@@ -11,6 +11,7 @@ struct SearchView: View {
     @EnvironmentObject private var library: LibraryStore
     @StateObject private var results = FeedViewModel()
     @State private var suggestions: [String] = []
+    @State private var pendingSearch: String?
 
     private var typing: Bool { !text.isEmpty && text != query }
 
@@ -170,9 +171,17 @@ struct SearchView: View {
         .contentShape(Rectangle())
         .onTapGesture { submit(record.query) }
         .contextMenu {
-            Button(role: .destructive) { library.removeSearch(record.query) } label: {
+            Button(role: .destructive) { pendingSearch = record.query } label: {
                 Label("검색 기록에서 삭제", systemImage: "trash")
             }
+        }
+        .confirmationDialog("검색 기록에서 삭제할까요?", isPresented: Binding(
+            get: { pendingSearch == record.query }, set: { if !$0 { pendingSearch = nil } }
+        ), titleVisibility: .visible) {
+            Button("삭제", role: .destructive) { library.removeSearch(record.query); pendingSearch = nil }
+            Button("취소", role: .cancel) { pendingSearch = nil }
+        } message: {
+            Text("'\(record.query)' 검색 기록이 지워져요.")
         }
     }
 }
