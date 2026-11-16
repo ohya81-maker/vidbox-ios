@@ -18,13 +18,16 @@ if (!is_string($secret) || $secret === '' || !hash_equals(strtoupper($secret), s
     kt_json(['state' => 'badcode']);
 }
 
-// 남용 방지: 1시간에 40번까지
-$log = @include KT_TESTERS;
-if (!is_array($log)) $log = ['hits' => []];
-$log['hits'] = array_values(array_filter($log['hits'], fn($t) => $t > time() - 3600));
-if (count($log['hits']) >= 40) kt_json(['state' => 'busy']);
-$log['hits'][] = time();
-file_put_contents(KT_TESTERS, '<?php return ' . var_export($log, true) . ';');
+// 남용 방지: 초대를 새로 만드는 신청/다시 보내기만 1시간에 20번까지 센다
+// (수락 확인은 15초마다 자동으로 묻기 때문에 세지 않는다)
+if ($action === 'request' || $action === 'resend') {
+    $log = @include KT_TESTERS;
+    if (!is_array($log)) $log = ['hits' => []];
+    $log['hits'] = array_values(array_filter($log['hits'] ?? [], fn($t) => $t > time() - 3600));
+    if (count($log['hits']) >= 20) kt_json(['state' => 'busy']);
+    $log['hits'][] = time();
+    file_put_contents(KT_TESTERS, '<?php return ' . var_export($log, true) . ';');
+}
 
 function find_user(string $email): ?array {
     [$c, $js] = kt_asc('GET', '/users?limit=5&filter[username]=' . rawurlencode($email));
