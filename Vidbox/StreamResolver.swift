@@ -525,24 +525,9 @@ final class LocalHLS: @unchecked Sendable {
                 range = lines.first { $0.lowercased().hasPrefix("range:") }
                     .map { String($0.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
             }
-            // 영상 구간: 느린 서버면 보조 서버로 우회해서 받아 넘긴다
+            // 영상 구간: 응답이 먼저 오는 서버(느리면 1.2초 뒤 보조 서버)에서 받는 대로 바로 넘긴다
             if self.lookup(path) == nil, let source = self.upstreamURL(path) {
-                Task {
-                    let response: Data
-                    if let (body, http) = await Self.hedgedFetch(source, range: range) {
-                        var header = http.statusCode == 206 ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n"
-                        header += "Content-Type: \(http.value(forHTTPHeaderField: "Content-Type") ?? "video/mp4")\r\n"
-                        header += "Content-Length: \(body.count)\r\n"
-                        if let contentRange = http.value(forHTTPHeaderField: "Content-Range") {
-                            header += "Content-Range: \(contentRange)\r\n"
-                        }
-                        header += "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n"
-                        response = Data(header.utf8) + body
-                    } else {
-                        response = Data("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
-                    }
-                    connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
-                }
+                HedgedStream.start(source, range: range, to: connection)
                 return
             }
             let response: Data
@@ -600,36 +585,9 @@ final class LocalHLS: @unchecked Sendable {
 
     /// 원래 서버 → (1.2초마다) 보조 서버 순으로 요청을 걸고, 응답이 먼저 시작된 쪽에서 받는다
     static func hedgedFetch(_ url: URL, range: String?) async -> (Data, HTTPURLResponse)? {
-        let urls = [url] + alternateHosts(url)
-        let claim = Claim()
-        return await withTaskGroup(of: (Data, HTTPURLResponse)?.self) { group in
-            for (index, target) in urls.enumerated() {
-                group.addTask {
-                    if index > 0 {
-                        try? await Task.sleep(for: .milliseconds(1200 * index))
-                        if Task.isCancelled { return nil }
-                        if await claim.taken { return nil }
-                    }
-                    var request = URLRequest(url: target)
-                    request.timeoutInterval = 12
-                    request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
-                    if let range { request.setValue(range, forHTTPHeaderField: "Range") }
-                    // 한 번에 받는다. (예전: 1바이트씩 반복해서 받아 쌓았는데, 쇼츠처럼 첫 조각이 1~3MB로 크면
-                    //  그 반복에만 몇 초가 걸려 첫 재생이 5초 넘게 늦었다)
-                    guard let (body, response) = try? await URLSession.shared.data(for: request),
-                          let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode)
-                    else { return nil }
-                    guard await claim.take() else { return nil }
-                    return (body, http)
-                }
-            }
-            for await result in group {
-                if let result {
-                    group.cancelAll()
-                    return result
-                }
-            }
-            return nil
+        await withCheckedContinuation { (continuation: CheckedContinuation<(Data, HTTPURLResponse)?, Never>) in
+            let collector = HedgedStream.Collector { result in continuation.resume(returning: result) }
+            HedgedStream.run(url, range: range, sink: collector)
         }
     }
 
@@ -741,5 +699,191 @@ final class LocalHLS: @unchecked Sendable {
             p += 12
         }
         return segments
+    }
+}
+
+
+// MARK: - 보조 서버로 우회하며 받는 대로 흘려보내기
+//
+// 처음 서버가 1.2초 안에 응답(헤더)하지 않으면 보조 서버에도 요청한다. 헤더가 먼저 온 서버 하나로 정하고
+// 나머지는 바로 취소 → 같은 구간을 여러 번 받지 않는다 (예전처럼 다 받을 때까지 기다렸다가 넘기지 않고,
+// 받는 즉시 플레이어로 보내므로 쇼츠처럼 첫 구간이 1~3MB로 커도 바로 재생이 시작된다)
+
+protocol HedgedSink: AnyObject {
+    /// 이긴 응답의 헤더
+    func begin(_ response: HTTPURLResponse)
+    func receive(_ data: Data)
+    /// ok=false: 모든 서버 실패 또는 도중 끊김
+    func finish(ok: Bool)
+}
+
+final class HedgedStream: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private static let shared = HedgedStream()
+    private var session: URLSession!
+
+    private override init() {
+        super.init()
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 12
+        config.urlCache = nil
+        config.httpMaximumConnectionsPerHost = 8
+        session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }
+    private let lock = NSLock()
+    /// 요청 하나 = 여러 서버 시도를 묶은 묶음
+    private final class Race {
+        let sink: HedgedSink
+        var tasks: [URLSessionDataTask] = []
+        var winner: Int?
+        var failed = 0
+        var total = 0
+        var done = false
+        init(sink: HedgedSink) { self.sink = sink }
+    }
+    private var races: [Int: Race] = [:]   // taskIdentifier → 묶음
+
+    static func start(_ url: URL, range: String?, to connection: NWConnection) {
+        run(url, range: range, sink: ConnectionSink(connection))
+    }
+
+    static func run(_ url: URL, range: String?, sink: HedgedSink) {
+        shared.race(url, range: range, sink: sink)
+    }
+
+    private func race(_ url: URL, range: String?, sink: HedgedSink) {
+        let urls = [url] + LocalHLS.alternateHosts(url)
+        let race = Race(sink: sink)
+        race.total = urls.count
+        for (index, target) in urls.enumerated() {
+            let launch = { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                if race.done || race.winner != nil { self.lock.unlock(); return }
+                var request = URLRequest(url: target)
+                request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
+                if let range { request.setValue(range, forHTTPHeaderField: "Range") }
+                let task = self.session.dataTask(with: request)
+                race.tasks.append(task)
+                self.races[task.taskIdentifier] = race
+                self.lock.unlock()
+                task.resume()
+            }
+            if index == 0 {
+                launch()
+            } else {
+                DispatchQueue.global().asyncAfter(deadline: .now() + 1.2 * Double(index), execute: launch)
+            }
+        }
+    }
+
+    // 헤더 도착: 처음 온 정상 응답만 채택, 나머지는 취소
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        lock.lock()
+        guard let race = races[dataTask.taskIdentifier], !race.done else {
+            lock.unlock(); completionHandler(.cancel); return
+        }
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            lock.unlock(); completionHandler(.cancel); return
+        }
+        if let winner = race.winner, winner != dataTask.taskIdentifier {
+            lock.unlock(); completionHandler(.cancel); return
+        }
+        race.winner = dataTask.taskIdentifier
+        let losers = race.tasks.filter { $0.taskIdentifier != dataTask.taskIdentifier }
+        lock.unlock()
+        losers.forEach { $0.cancel() }
+        race.sink.begin(http)
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        let race = races[dataTask.taskIdentifier]
+        let isWinner = race?.winner == dataTask.taskIdentifier
+        lock.unlock()
+        if let race, isWinner { race.sink.receive(data) }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        guard let race = races.removeValue(forKey: task.taskIdentifier), !race.done else { lock.unlock(); return }
+        if race.winner == task.taskIdentifier {
+            race.done = true
+            lock.unlock()
+            race.sink.finish(ok: error == nil)
+            return
+        }
+        if race.winner == nil {
+            race.failed += 1
+            // 모든 서버가 실패(아직 시작 안 한 보조 서버는 실패한 것으로 보고 곧바로 시작하지 않음)
+            if race.failed >= race.total {
+                race.done = true
+                lock.unlock()
+                race.sink.finish(ok: false)
+                return
+            }
+        }
+        lock.unlock()
+    }
+
+    // MARK: 받는 쪽
+
+    /// 플레이어(127.0.0.1 연결)로 바로 흘려보냄
+    final class ConnectionSink: HedgedSink {
+        let connection: NWConnection
+        private var started = false
+        init(_ connection: NWConnection) { self.connection = connection }
+
+        func begin(_ http: HTTPURLResponse) {
+            started = true
+            var header = http.statusCode == 206 ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n"
+            header += "Content-Type: \(http.value(forHTTPHeaderField: "Content-Type") ?? "video/mp4")\r\n"
+            if http.expectedContentLength > 0 { header += "Content-Length: \(http.expectedContentLength)\r\n" }
+            if let contentRange = http.value(forHTTPHeaderField: "Content-Range") {
+                header += "Content-Range: \(contentRange)\r\n"
+            }
+            header += "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+            connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
+        }
+
+        func receive(_ data: Data) {
+            connection.send(content: data, completion: .contentProcessed { _ in })
+        }
+
+        func finish(ok: Bool) {
+            if !started {
+                let bad = Data("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: bad, completion: .contentProcessed { [connection] _ in connection.cancel() })
+                return
+            }
+            let conn = connection
+            connection.send(content: nil, contentContext: .finalMessage, isComplete: true,
+                            completion: .contentProcessed { _ in conn.cancel() })
+        }
+    }
+
+    /// 다 모아서 한 번에 돌려줌 (재생목록용 작은 데이터)
+    final class Collector: HedgedSink, @unchecked Sendable {
+        private var response: HTTPURLResponse?
+        private var body = Data()
+        private let lock = NSLock()
+        private var completion: (((Data, HTTPURLResponse)?) -> Void)?
+        init(_ completion: @escaping ((Data, HTTPURLResponse)?) -> Void) { self.completion = completion }
+
+        func begin(_ response: HTTPURLResponse) {
+            lock.lock(); self.response = response
+            if response.expectedContentLength > 0 { body.reserveCapacity(Int(response.expectedContentLength)) }
+            lock.unlock()
+        }
+        func receive(_ data: Data) { lock.lock(); body.append(data); lock.unlock() }
+        func finish(ok: Bool) {
+            lock.lock()
+            let done = completion
+            completion = nil
+            let result = ok ? response.map { (body, $0) } : nil
+            lock.unlock()
+            done?(result)
+        }
     }
 }
