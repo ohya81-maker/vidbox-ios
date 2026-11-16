@@ -25,8 +25,7 @@ enum AppTab: String, Hashable {
 struct RootView: View {
     @EnvironmentObject private var player: PlayerManager
     @State private var tab: AppTab = .home
-    @State private var searchText = ""
-    @State private var searchQuery = ""
+    @ObservedObject private var search = SearchRouter.shared
     @State private var showDownloadsTest = false
 
     var body: some View {
@@ -60,17 +59,18 @@ struct RootView: View {
             } label: {
                 Label { Text("미디어") } icon: { Image(uiImage: UIImage(systemName: tab == .media ? "play.tv.fill" : "play.tv")!) }
             }
-            Tab(value: AppTab.search, role: .search) {
-                SearchView(text: $searchText, query: $searchQuery).miniPlayerInset()
+        }
+        // 검색은 하단 탭이 아니라 홈·쇼츠 위의 검색창에서 (하단에는 홈·쇼츠·음악·KIDS·미디어 다섯 개만).
+        // 화면 전체를 덮는 겹침으로 띄운다 — 검색 결과에서 영상을 열면 재생 화면이 그 위에 정상으로 뜬다
+        .overlay {
+            if search.isPresented {
+                SearchScreen()
+                    .miniPlayerInset()
+                    .background(Color(.systemBackground))
+                    .transition(.move(edge: .trailing))
             }
         }
-        // 선택 탭은 기본 유리 탭바 그대로(빨강 없이 .primary): 선택 표시는 유리 캡슐 + 채운 아이콘
-        // iOS 26: 검색 탭을 누르면 하단 탭이 왼쪽으로 접히고 그 자리에 검색창이 나온다
-        .searchable(text: $searchText, prompt: "동영상, 채널, 음악 검색")
-        .onSubmit(of: .search) {
-            let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !q.isEmpty { searchQuery = q }
-        }
+        .animation(.easeInOut(duration: 0.25), value: search.isPresented)
         .fullScreenCover(isPresented: $player.isExpanded) {
             PlayerView()
         }
@@ -106,10 +106,8 @@ struct RootView: View {
             return
         }
         if let q = defaults.string(forKey: "ktubeSearch") {
-            tab = .search
             try? await Task.sleep(nanoseconds: 500_000_000)
-            searchText = q
-            searchQuery = q
+            search.open(q)
         }
         if let id = defaults.string(forKey: "ktubePlay") {
             let audio = defaults.bool(forKey: "ktubeAudio")

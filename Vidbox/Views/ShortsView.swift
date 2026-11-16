@@ -323,6 +323,7 @@ struct ShortsView: View {
     @State private var scrollID: String?
     /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
     @Environment(\.colorScheme) private var appScheme
+    @ObservedObject private var search = SearchRouter.shared
 
     var body: some View {
         // 바깥: 하단 탭바/홈 인디케이터 높이만 읽는다. 안쪽: 화면 전체를 한 페이지로 써서
@@ -369,6 +370,15 @@ struct ShortsView: View {
                     .ignoresSafeArea()
             }
             .allowsHitTesting(false)
+        }
+        // YouTube 쇼츠처럼 위쪽 검색창
+        .overlay(alignment: .top) {
+            SearchBarButton(dark: true)
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+        }
+        .onChange(of: search.isPresented) { _, open in
+            if open { shorts.pause() } else if isActive { playCurrent() }
         }
         .overlay {
             if feed.items.isEmpty {

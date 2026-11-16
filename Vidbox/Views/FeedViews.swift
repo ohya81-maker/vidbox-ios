@@ -304,9 +304,10 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 12) {
             AppLogo()
-            Spacer()
+            // YouTube처럼 맨 위 검색창
+            SearchBarButton()
             // 보관함 (계정·시청 기록·저장한 동영상·설정)
             Button { showLibrary = true } label: {
                 if account.isLoggedIn {
