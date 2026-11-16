@@ -12,6 +12,9 @@ struct PlayerView: View {
     @State private var showDownload = false
     @State private var relatedFilter = 0
     @State private var showComments = false
+    /// 댓글 창을 위로 쓸어 올려 화면 전체로 키운 상태
+    @State private var commentsFull = false
+    @State private var commentsDrag: CGFloat = 0
     /// 아래 목록을 위로 올린 만큼 (세로 영상은 이만큼 재생 화면이 줄어든다)
     @State private var scrollY: CGFloat = 0
 
@@ -97,11 +100,24 @@ struct PlayerView: View {
             // 댓글: YouTube처럼 영상은 위에서 계속 재생되고, 그 아래를 댓글 창이 채운다
             if showComments, let page = player.commentsPreview {
                 VStack(spacing: 0) {
-                    // 영상 자리는 비워 둔다 (터치는 그대로 영상으로)
-                    Color.clear.frame(height: compactHeight).allowsHitTesting(false)
-                    CommentsPanel(first: page) {
-                        withAnimation(.easeInOut(duration: 0.25)) { showComments = false }
-                    }
+                    // 영상 자리는 비워 둔다 (터치는 그대로 영상으로). 위로 쓸어 올리면 0까지 줄어 화면 전체가 댓글
+                    Color.clear
+                        .frame(height: min(compactHeight, max(0, (commentsFull ? 0 : compactHeight) + commentsDrag)))
+                        .allowsHitTesting(false)
+                    CommentsPanel(first: page, onClose: {
+                        withAnimation(.easeInOut(duration: 0.25)) { showComments = false; commentsFull = false }
+                    }, onDrag: { dy in
+                        commentsDrag = dy
+                    }, onDragEnd: { dy in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                            if dy < -60 {
+                                commentsFull = true
+                            } else if dy > 60 {
+                                if commentsFull { commentsFull = false } else { showComments = false }
+                            }
+                            commentsDrag = 0
+                        }
+                    })
                     .id(player.current?.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(.systemBackground))
@@ -287,6 +303,7 @@ struct PlayerView: View {
         .onChange(of: player.current?.id) { _, _ in
             relatedFilter = 0
             showComments = false
+            commentsFull = false
         }
     }
 
@@ -810,6 +827,9 @@ struct SubscribeLabelStyle: LabelStyle {
 struct CommentsPanel: View {
     let first: CommentPage
     var onClose: () -> Void
+    /// 상단바를 위/아래로 끄는 중 (위로 올리면 화면 전체, 내리면 원래 크기·닫기)
+    var onDrag: (CGFloat) -> Void = { _ in }
+    var onDragEnd: (CGFloat) -> Void = { _ in }
     @EnvironmentObject private var account: AccountStore
     @State private var comments: [Comment] = []
     @State private var next: String?
@@ -822,24 +842,33 @@ struct CommentsPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("댓글").font(.headline)
-                if let count = first.countText?.replacingOccurrences(of: "댓글", with: "")
-                    .replacingOccurrences(of: "개", with: "").trimmingCharacters(in: .whitespaces) {
-                    Text(count).font(.subheadline).foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                Capsule().fill(Color.secondary.opacity(0.4)).frame(width: 36, height: 5).padding(.top, 6)
+                HStack {
+                    Text("댓글").font(.headline)
+                    if let count = first.countText?.replacingOccurrences(of: "댓글", with: "")
+                        .replacingOccurrences(of: "개", with: "").trimmingCharacters(in: .whitespaces) {
+                        Text(count).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                .padding(.leading, 16)
+                .padding(.trailing, 8)
+                .padding(.vertical, 6)
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 8)
-            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                    .onChanged { onDrag($0.translation.height) }
+                    .onEnded { onDragEnd($0.translation.height) }
+            )
             Divider()
 
             List {
