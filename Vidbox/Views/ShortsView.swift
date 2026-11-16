@@ -124,6 +124,29 @@ final class ShortsPlayer: ObservableObject {
 
     func player(for id: String) -> AVPlayer? { slots[id]?.player }
 
+    private var restartObserver: NSObjectProtocol?
+
+    init() {
+        // 중계 서버가 새로 켜지면 예전 주소로 준비해 둔 쇼츠는 못 쓴다 → 모두 다시 준비
+        restartObserver = NotificationCenter.default.addObserver(forName: LocalHLS.didRestart, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuildAll() }
+        }
+    }
+
+    private func rebuildAll() {
+        guard !slots.isEmpty else { return }
+        for (_, slot) in slots { slot.tearDown() }
+        slots.removeAll()
+        if let id = currentID {
+            isReady = false
+            failed = false
+            _ = makeSlot(id)
+            armSpinner()
+            armWatchdog(for: id)
+        }
+        publishSlots()
+    }
+
     /// item을 재생. previous는 뒤로 넘길 때를 위해 남겨 두고, upcoming[0]은 첫 프레임까지 미리 받는다
     /// 넘긴 순간부터 재생 시작까지 걸린 시간을 NAS 진단 기록으로 (어디서 늦는지 보기 위해)
     private var playStarted = Date()
@@ -272,6 +295,16 @@ final class ShortsPlayer: ObservableObject {
         }
         // 미리 받는 쇼츠: 재생 준비가 되면 디코더까지 데워 둔다 (첫 프레임이 화면에 그려짐)
         slot.itemObservation = playerItem.observe(\.status, options: [.new]) { [weak self] item, _ in
+            // 이 재생 방식이 실패하면 3초를 기다리지 않고 바로 다음 방식으로
+            if item.status == .failed {
+                Task { @MainActor in
+                    guard let self, let slot = self.slots[slotID], slot.player.currentItem === item else { return }
+                    PlaybackDiag.note("shorts candidate failed fast: " + PlaybackDiag.describe(item))
+                    slot.player.replaceCurrentItem(with: nil)
+                    await self.tryCandidate(slot, from: slot.candidateIndex + 1)
+                }
+                return
+            }
             guard item.status == .readyToPlay else { return }
             Task { @MainActor in
                 guard let self, self.currentID != slotID, slotPlayer.rate == 0,

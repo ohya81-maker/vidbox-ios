@@ -825,13 +825,18 @@ final class PlayerManager: ObservableObject {
     private func enterForeground() {
         isInBackground = false
         for layer in layers.allObjects { layer.player = player }
-        guard let item = current, !audioOnly || player.currentItem == nil else { return }
+        // 소리를 내며 재생 중이 아니었다면 앱이 멈춰 중계 서버가 끊겼을 수 있다 → 새로 켠다
+        // (재생 중이었다면 앱이 계속 깨어 있었으므로 지금 재생을 끊지 않게 그대로 둔다)
         let away = Date().timeIntervalSince(backgroundedAt ?? Date())
+        if player.timeControlStatus == .paused, away > 3 {
+            Task { await LocalHLS.shared.restart() }
+        }
+        guard let item = current, !audioOnly || player.currentItem == nil else { return }
         let playing = player.timeControlStatus != .paused
         let broken = player.currentItem == nil || player.currentItem?.status == .failed
         // 멈춘 채로 오래 나가 있으면 앱 안의 재생 중계(127.0.0.1)가 iOS에 의해 끊겨 화면이 검게 남는다
         // → 같은 위치에서 새로 불러온다 (자동 재생은 하지 않음)
-        if broken || (!playing && away > 15) {
+        if broken || (!playing && away > 3) {
             let position = player.currentTime().seconds.isFinite ? player.currentTime().seconds : currentTime
             Task { [weak self] in
                 if away > 1800 { await StreamResolver.shared.invalidate(item.id) }

@@ -482,6 +482,15 @@ final class LocalHLS: @unchecked Sendable {
     // MARK: 서버
 
     /// "http://127.0.0.1:<port>" — 서버가 꺼져 있으면 다시 켠다
+    /// 앱이 백그라운드에서 멈춰 있던 동안 iOS가 중계 서버(127.0.0.1)를 끊는다 → 돌아오면 새로 켠다.
+    /// 예전 주소로 준비된 재생 항목은 쓸 수 없으므로 알림을 보내 다시 준비하게 한다
+    static let didRestart = Notification.Name("LocalHLS.didRestart")
+
+    func restart() async {
+        _ = try? await startServer()
+        NotificationCenter.default.post(name: Self.didRestart, object: nil)
+    }
+
     func baseURL() async throws -> String {
         if let port = currentPort() { return "http://127.0.0.1:\(port)" }
         let port = try await startServer()
@@ -611,6 +620,8 @@ final class LocalHLS: @unchecked Sendable {
         await withCheckedContinuation { (continuation: CheckedContinuation<(Data, HTTPURLResponse)?, Never>) in
             let collector = HedgedStream.Collector { result in continuation.resume(returning: result) }
             HedgedStream.run(url, range: range, sink: collector)
+            // 재생목록용 작은 요청이 오래 멈추면(33초까지 본 적 있음) 6초에서 포기 → 다른 재생 방식으로
+            DispatchQueue.global().asyncAfter(deadline: .now() + 6) { collector.finish(ok: false) }
         }
     }
 
