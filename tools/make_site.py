@@ -76,7 +76,7 @@ build = info.get("CFBundleVersion", build)
 base = args.base.rstrip("/")
 os.makedirs(args.out, exist_ok=True)
 
-ipa_name = f"KTUBE-{version}.ipa"
+ipa_name = f"KTUBE-{version}-{build}.ipa"  # 빌드마다 새 이름 → 기기가 예전 파일을 캐시에서 쓰지 않음
 shutil.copyfile(args.ipa, os.path.join(args.out, ipa_name))
 shutil.copyfile(os.path.join(ROOT, "Vidbox", "Assets.xcassets", "AppIcon.appiconset", "icon-1024.png"),
                 os.path.join(args.out, "icon.png"))
@@ -144,7 +144,7 @@ manifest = {
 for name in ("manifest.plist", "manifest.xml"):
     with open(os.path.join(args.out, name), "wb") as f:
         plistlib.dump(manifest, f)
-itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.xml", safe="")
+itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.xml?v={build}", safe="")
 if signed:
     # 버튼 하나: 이 기기에서 등록을 마친 적이 있으면 바로 설치, 처음이면 등록(프로필) → 자동 설치
     direct = ('<a class="btn primary" href="testflight.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>TestFlight로 설치 (추천)</a>'

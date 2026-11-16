@@ -67,7 +67,7 @@
   var udid = q.get("udid");
   function show(id) { ["start","progress","done","fail"].forEach(function (x) { document.getElementById(x).classList.toggle("hidden", x !== id); }); }
   var dir = location.pathname.replace(/[^\/]*$/, "");
-  var itms = "itms-services://?action=download-manifest&url=" + encodeURIComponent(location.origin + dir + "manifest.xml");
+  var itms = "itms-services://?action=download-manifest&url=" + encodeURIComponent(location.origin + dir + "manifest.xml?v=" + Date.now());
   document.getElementById("install").href = itms;
   if (q.get("error")) { show("fail"); return; }
   // 설치 페이지의 「이 아이폰에 설치」에서 왔으면 등록 프로필을 바로 내려받는다

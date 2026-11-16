@@ -3,6 +3,12 @@ name: Build IPA
 on:
   push:
     branches: [main]
+    # 설치 페이지·도구만 바뀐 경우는 앱을 다시 빌드하지 않는다
+    paths-ignore:
+      - 'site/**'
+      - 'tools/make_site.py'
+      - 'tools/deploy_synology.sh'
+      - 'tools/set_nas_token.*'
   workflow_dispatch:
 
 permissions:
