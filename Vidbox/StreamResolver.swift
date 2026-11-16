@@ -179,7 +179,9 @@ actor StreamResolver {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+        let tStart = Date()
         let (data, response) = try await URLSession.shared.data(for: request)
+        let playerTime = Date().timeIntervalSince(tStart)
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         let playability = json?["playabilityStatus"] as? [String: Any]
         guard let json, playability?["status"] as? String == "OK",
@@ -212,9 +214,13 @@ actor StreamResolver {
         // (m4a를 직접 재생하면 아이폰이 길이를 실제의 2배로 계산하는 문제가 있어 뒤로 미룸)
         // m4a 직접 재생은 길이가 2배로 나오므로, 자체 HLS를 한 번 더 시도하고 YouTube HLS를 그다음에 둔다
         // 오디오 재생목록 · 영상 재생목록 · "앞부분만 허용" 검사를 동시에 진행 (차례로 하면 시작이 늦어진다)
+        // 쇼츠처럼 짧은 영상(90초 이하)은 "앞부분만 허용" 검사가 필요 없다 (허용되는 앞부분이 1분 이상)
+        let lengthSeconds = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init) ?? 0
+        let needsGateCheck = lengthSeconds > 90
+        let tPaths = Date()
         async let audioPathTask = Self.audioPath(id: id, audio: audioFormat)
         async let videoPathTask = Self.videoPath(id: id, videos: videoFormats, audio: audioFormat)
-        async let gatedTask = Self.probeGated(audioFormat ?? videoFormats.first)
+        async let gatedTask = needsGateCheck ? Self.probeGated(audioFormat ?? videoFormats.first) : false
 
         var audio: [PlaybackSource] = []
         if let audioFormat {
@@ -236,6 +242,7 @@ actor StreamResolver {
 
         // 안전장치: 그래도 고화질 파일이 앞부분만 허용되면(뒤쪽 1KB 요청이 403)
         // 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
+        let pathsTime = Date().timeIntervalSince(tPaths)
         var gatedMuxed: URL?
         if await gatedTask, let full = try? await fetchAndroidMuxed(id: id) {
             video.insert(.limited(full), at: 0)
@@ -244,6 +251,8 @@ actor StreamResolver {
         }
 
         guard !video.isEmpty || !audio.isEmpty else { throw AppError.noPlayableStream }
+        PlaybackDiag.note(String(format: "resolve %@ player=%.2f paths=%.2f total=%.2f gate=%@", id, playerTime, pathsTime,
+                                 Date().timeIntervalSince(tStart), needsGateCheck ? "Y" : "N"))
         let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
         return Entry(video: video, audio: audio, date: Date(), length: length,
                      downloadVideo: videoFormats.first, downloadAudio: audioFormat, downloadMuxed: gatedMuxed)
@@ -271,7 +280,7 @@ actor StreamResolver {
         guard length > 100_000 else { return false }
         let offset = Int(Double(length) * 0.85)
         var request = URLRequest(url: format.url)
-        request.timeoutInterval = 5
+        request.timeoutInterval = 0.8   // 늦으면 "제한 없음"으로 보고 바로 시작 (드문 제한 영상은 재생 중 감시가 처리)
         request.setValue("bytes=\(offset)-\(offset + 1023)", forHTTPHeaderField: "Range")
         request.setValue(iosUserAgent, forHTTPHeaderField: "User-Agent")
         guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }

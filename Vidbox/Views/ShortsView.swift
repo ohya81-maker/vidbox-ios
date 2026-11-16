@@ -85,6 +85,10 @@ final class ShortsPlayer: ObservableObject {
         var statusObservation: NSKeyValueObservation?
         var itemObservation: NSKeyValueObservation?
         var failed = false
+        // 시간 기록 (원인 분석용)
+        let created = Date()
+        var resolved: Date?
+        var attached: Date?
 
         init(id: String) {
             self.id = id
@@ -120,8 +124,27 @@ final class ShortsPlayer: ObservableObject {
     func player(for id: String) -> AVPlayer? { slots[id]?.player }
 
     /// item을 재생. previous는 뒤로 넘길 때를 위해 남겨 두고, upcoming[0]은 첫 프레임까지 미리 받는다
+    /// 넘긴 순간부터 재생 시작까지 걸린 시간을 NAS 진단 기록으로 (어디서 늦는지 보기 위해)
+    private var playStarted = Date()
+    private var startedPreloaded = false
+
+    private func reportTiming(_ id: String) {
+        guard let slot = slots[id] else { return }
+        let total = Date().timeIntervalSince(playStarted)
+        func since(_ d: Date?) -> String { d.map { String(format: "%.2f", $0.timeIntervalSince(slot.created)) } ?? "-" }
+        let kind = slot.candidateIndex < slot.candidates.count ? slot.candidates[slot.candidateIndex].kind : "-"
+        PlaybackDiag.report("shorts-timing", id: id, details: [
+            String(format: "toPlay=%.2f", total), "preloaded=\(startedPreloaded)",
+            "resolve=\(since(slot.resolved))", "attach=\(since(slot.attached))", "source=\(kind)#\(slot.candidateIndex)",
+        ])
+    }
+
     func play(_ item: VideoItem, previous: String?, upcoming next: [String]) {
         upcoming = next
+        if currentID != item.id {
+            playStarted = Date()
+            startedPreloaded = slots[item.id]?.player.currentItem != nil
+        }
         if currentID == item.id {
             resume()
             return
@@ -192,6 +215,7 @@ final class ShortsPlayer: ObservableObject {
                     self.isReady = true
                     self.showSpinner = false
                     self.preloadNext()
+                    self.reportTiming(id)
                 }
             }
         }
@@ -205,6 +229,7 @@ final class ShortsPlayer: ObservableObject {
             }
             guard !Task.isCancelled, let self else { return }
             slot.candidates = list
+            slot.resolved = Date()
             await self.tryCandidate(slot, from: 0)
         }
         return slot
@@ -230,6 +255,7 @@ final class ShortsPlayer: ObservableObject {
     }
 
     private func attach(_ playerItem: AVPlayerItem, to slot: Slot) {
+        slot.attached = Date()
         Self.tuneForQuickStart(playerItem)
         // 끝나면 처음으로 되감아 반복
         if let old = slot.endObserver { NotificationCenter.default.removeObserver(old) }
