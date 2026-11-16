@@ -113,7 +113,9 @@ struct PlayerView: View {
                             if dy < -60 {
                                 commentsFull = true
                             } else if dy > 60 {
-                                if commentsFull { commentsFull = false } else { showComments = false }
+                                // 아래로 쓸어내리면 (화면 전체 상태였어도) 바로 닫는다
+                                showComments = false
+                                commentsFull = false
                             }
                             commentsDrag = 0
                         }
@@ -867,7 +869,10 @@ struct CommentsPanel: View {
             .gesture(
                 DragGesture(minimumDistance: 8, coordinateSpace: .global)
                     .onChanged { onDrag($0.translation.height) }
-                    .onEnded { onDragEnd($0.translation.height) }
+                    .onEnded { v in
+                        if v.translation.height > 60 { typing = false }
+                        onDragEnd(v.translation.height)
+                    }
             )
             Divider()
 
@@ -883,9 +888,23 @@ struct CommentsPanel: View {
             }
             .listStyle(.plain)
             .scrollDismissesKeyboard(.interactively)
+            // 목록 맨 위에서 아래로 더 당기면 닫는다
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top < -90
+            } action: { _, pulled in
+                if pulled { typing = false; onDragEnd(100) }
+            }
 
             Divider()
             composer
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                        .onChanged { v in if v.translation.height > 0 { onDrag(v.translation.height) } }
+                        .onEnded { v in
+                            if v.translation.height > 60 { typing = false }
+                            onDragEnd(v.translation.height > 0 ? v.translation.height : 0)
+                        }
+                )
         }
         .onAppear {
             if comments.isEmpty {
