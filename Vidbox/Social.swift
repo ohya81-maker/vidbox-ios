@@ -21,6 +21,8 @@ struct Comment: Identifiable, Hashable {
     var published: String?
     var likes: String?
     var replies: String?
+    /// 답글(대댓글)을 불러올 토큰
+    var repliesToken: String? = nil
 }
 
 struct CommentPage {
@@ -162,7 +164,18 @@ extension InnerTubeClient {
                     }
                     if let thread = item["commentThreadRenderer"] as? [String: Any],
                        let cid = Self.digJSON(thread, "commentViewModel", "commentViewModel", "commentId") as? String,
-                       let c = entities[cid] {
+                       var c = entities[cid] {
+                        if let replies = thread["replies"] {
+                            Self.walkJSON(replies) { k, v in
+                                if c.repliesToken == nil, k == "continuationCommand", let d = v as? [String: Any] {
+                                    c.repliesToken = d["token"] as? String
+                                }
+                            }
+                        }
+                        ordered.append(c)
+                    }
+                    // 답글 목록을 불러오면 commentViewModel이 바로 온다
+                    if let cid = Self.digJSON(item, "commentViewModel", "commentId") as? String, let c = entities[cid] {
                         ordered.append(c)
                     }
                     if item["continuationItemRenderer"] != nil {

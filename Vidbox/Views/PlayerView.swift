@@ -1028,29 +1028,81 @@ struct CommentsPanel: View {
 
 struct CommentRow: View {
     let comment: Comment
+    var isReply = false
     @State private var expanded = false
+    @State private var showReplies = false
+    @State private var replies: [Comment] = []
+    @State private var repliesNext: String?
+    @State private var loadingReplies = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            AvatarView(url: comment.avatar, size: 32)
-            VStack(alignment: .leading, spacing: 4) {
-                Text([comment.author, comment.published].compactMap { $0 }.joined(separator: " · "))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                AvatarView(url: comment.avatar, size: isReply ? 24 : 32)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text([comment.author, comment.published].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(comment.text)
+                        .font(.subheadline)
+                        .lineLimit(expanded ? nil : 5)
+                        .onTapGesture { expanded.toggle() }
+                    HStack(spacing: 16) {
+                        Label(comment.likes ?? "", systemImage: "hand.thumbsup")
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(comment.text)
-                    .font(.subheadline)
-                    .lineLimit(expanded ? nil : 5)
-                    .onTapGesture { expanded.toggle() }
-                HStack(spacing: 16) {
-                    Label(comment.likes ?? "", systemImage: "hand.thumbsup")
-                    if let replies = comment.replies { Label("답글 \(replies)", systemImage: "bubble.left") }
+                    .padding(.top, 2)
+
+                    // 답글(대댓글): 누르면 바로 아래에 펼쳐진다
+                    if let count = comment.replies, comment.repliesToken != nil {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { showReplies.toggle() }
+                            if showReplies && replies.isEmpty { Task { await loadReplies(comment.repliesToken) } }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: showReplies ? "chevron.up" : "chevron.down")
+                                Text(showReplies ? "답글 숨기기" : "답글 \(count)개")
+                            }
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
+            }
+
+            if showReplies {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(replies) { r in
+                        CommentRow(comment: r, isReply: true)
+                    }
+                    if loadingReplies {
+                        ProgressView().padding(.vertical, 4)
+                    } else if let next = repliesNext {
+                        Button { Task { await loadReplies(next) } } label: {
+                            Label("답글 더보기", systemImage: "arrow.turn.down.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.leading, 42)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, isReply ? 0 : 4)
+    }
+
+    private func loadReplies(_ token: String?) async {
+        guard let token, !loadingReplies else { return }
+        loadingReplies = true
+        defer { loadingReplies = false }
+        guard let page = try? await InnerTubeClient.shared.comments(token) else { return }
+        let known = Set(replies.map(\.id)).union([comment.id])
+        replies.append(contentsOf: page.comments.filter { !known.contains($0.id) })
+        repliesNext = page.next
     }
 }
 
