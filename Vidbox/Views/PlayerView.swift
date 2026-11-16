@@ -1338,11 +1338,21 @@ struct JellyfinPlaybackSettings: View {
     let videoID: String
     @Environment(\.dismiss) private var dismiss
     @State private var quality = JFQuality.current
+    @AppStorage("subtitleScale") private var subtitleScale: Double = 1.0
 
     var body: some View {
         let choice = JellyfinCatalog.shared.choice(for: videoID)
         NavigationStack {
             List {
+                Section("자막 크기") {
+                    Picker("자막 크기", selection: $subtitleScale) {
+                        Text("작게").tag(0.8)
+                        Text("보통").tag(1.0)
+                        Text("크게").tag(1.3)
+                        Text("아주 크게").tag(1.6)
+                    }
+                    .pickerStyle(.segmented)
+                }
                 Section("자막") {
                     row("끄기", selected: choice?.subtitleIndex == nil) { apply(subtitle: -1) }
                     ForEach(choice?.subtitleTracks ?? []) { t in
@@ -1397,13 +1407,15 @@ struct JellyfinPlaybackSettings: View {
 struct SubtitleOverlay: View {
     @ObservedObject var subtitles: SubtitleClock
     let fullscreen: Bool
+    /// 자막 크기 (재생 설정에서 바꿈)
+    @AppStorage("subtitleScale") private var scale: Double = 1.0
 
     var body: some View {
         VStack {
             Spacer()
             if let text = subtitles.text {
                 Text(text)
-                    .font(.system(size: fullscreen ? 24 : 18, weight: .semibold))
+                    .font(.system(size: (fullscreen ? 24 : 18) * scale, weight: .semibold))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .shadow(color: .black, radius: 2, x: 0, y: 1)

@@ -32,6 +32,38 @@ struct JFItem: Identifiable, Hashable, Decodable {
     let SeasonId: String?
     let AlbumId: String?
     let UserData: UserDataInfo?
+    /// 재생 위치 미리보기 이미지 정보 (서버가 만들어 둔 경우): [미디어소스ID: [폭: 정보]]
+    let Trickplay: [String: [String: TrickplayInfo]]?
+
+    struct TrickplayInfo: Hashable, Decodable {
+        let Width: Int?
+        let Height: Int?
+        let TileWidth: Int?
+        let TileHeight: Int?
+        let ThumbnailCount: Int?
+        let Interval: Int?
+    }
+
+    /// 멈춘 위치의 화면: 미리보기 묶음 이미지 URL + 그 안의 칸 위치(열, 행, 열 수, 행 수, 가로세로비)
+    var pausedFrame: (url: URL, col: Int, row: Int, cols: Int, rows: Int, aspect: Double)? {
+        guard let entry = Trickplay?.first,
+              let best = entry.value.sorted(by: { (Int($0.key) ?? 0) < (Int($1.key) ?? 0) }).last,
+              case let (source, width, info) = (entry.key, best.key, best.value),
+              let interval = info.Interval, interval > 0,
+              let cols = info.TileWidth, let rows = info.TileHeight, cols > 0, rows > 0,
+              let token = JellyfinSession.shared.token
+        else { return nil }
+        let ms = Int((UserData?.PlaybackPositionTicks ?? 0) / 10_000)
+        var thumb = ms / interval
+        if let count = info.ThumbnailCount, count > 0 { thumb = min(thumb, count - 1) }
+        let perSheet = cols * rows
+        let sheet = thumb / perSheet
+        let inSheet = thumb % perSheet
+        let aspect = Double(info.Width ?? 16) / Double(max(info.Height ?? 9, 1))
+        guard let url = URL(string: "\(JellyfinSession.shared.server)/Videos/\(Id)/Trickplay/\(width)/\(sheet).jpg?MediaSourceId=\(source)&ApiKey=\(token)")
+        else { return nil }
+        return (url, inSheet % cols, inSheet / cols, cols, rows, aspect)
+    }
 
     struct UserDataInfo: Hashable, Decodable {
         let PlaybackPositionTicks: Int64?
@@ -281,7 +313,7 @@ enum JellyfinAPI {
 
     static func resume() async throws -> [JFItem] {
         let u = try user
-        let q = "limit=16&mediaTypes=Video&fields=\(fields)&enableImageTypes=Primary,Backdrop,Thumb"
+        let q = "limit=16&mediaTypes=Video&fields=\(fields),Trickplay&enableImageTypes=Primary,Backdrop,Thumb"
         if let list = try? await items("/UserItems/Resume?userId=\(u)&\(q)") { return list }
         return try await items("/Users/\(u)/Items/Resume?\(q)")
     }

@@ -122,43 +122,50 @@ struct MediaView: View {
                     Text(error).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
                 }
 
+                // 맨 위: 최근 추가된 영화·시리즈를 큰 배경 그림으로 넘겨 본다
+                if !heroItems.isEmpty {
+                    HeroCarousel(items: heroItems)
+                }
+
                 if !model.resume.isEmpty {
-                    section("이어서 보기") {
-                        ForEach(model.resume) { item in
-                            Button { MediaPlay.play(item, in: [item]) } label: {
-                                WideCard(item: item)
+                    VStack(alignment: .leading, spacing: 10) {
+                        sectionHeader("이어서 보기", icon: "play.circle.fill", tint: .red)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(alignment: .top, spacing: 14) {
+                                ForEach(model.resume) { item in
+                                    Button { MediaPlay.play(item, in: [item]) } label: { ResumeCard(item: item) }
+                                        .buttonStyle(.plain)
+                                }
                             }
-                            .buttonStyle(.plain)
+                            .padding(.horizontal, 16)
                         }
                     }
                 }
 
                 ForEach(model.libraries) { lib in
-                    VStack(alignment: .leading, spacing: 10) {
-                        NavigationLink(value: lib) {
-                            HStack(spacing: 4) {
-                                Text(lib.Name ?? "").font(.headline)
-                                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                    let items = model.latest[lib.Id] ?? []
+                    if !items.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            NavigationLink(value: lib) {
+                                sectionHeader(lib.Name ?? "", icon: Self.icon(lib.CollectionType), tint: Self.tint(lib.CollectionType), more: true)
                             }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 16)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .top, spacing: 12) {
-                                let items = model.latest[lib.Id] ?? []
-                                ForEach(items) { item in
-                                    if item.isFolder {
-                                        NavigationLink(value: item) { PosterCard(item: item, square: lib.CollectionType == "music") }
+                            .buttonStyle(.plain)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(alignment: .top, spacing: 12) {
+                                    ForEach(items) { item in
+                                        if item.isFolder {
+                                            NavigationLink(value: item) { PosterCard(item: item, square: lib.CollectionType == "music", large: true) }
+                                                .buttonStyle(.plain)
+                                        } else {
+                                            Button { MediaPlay.play(item, in: [item]) } label: {
+                                                PosterCard(item: item, square: lib.CollectionType == "music", large: true)
+                                            }
                                             .buttonStyle(.plain)
-                                    } else {
-                                        Button { MediaPlay.play(item, in: [item]) } label: {
-                                            PosterCard(item: item, square: lib.CollectionType == "music")
                                         }
-                                        .buttonStyle(.plain)
                                     }
                                 }
+                                .padding(.horizontal, 16)
                             }
-                            .padding(.horizontal, 16)
                         }
                     }
                 }
@@ -174,13 +181,53 @@ struct MediaView: View {
         .toolbar(.hidden, for: .navigationBar)
     }
 
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.headline).padding(.horizontal, 16)
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 12) { content() }
-                    .padding(.horizontal, 16)
+    /// 영화·시리즈 보관함의 최근 항목 (배경 그림이 있는 것만, 최대 8개)
+    private var heroItems: [JFItem] {
+        let libs = model.libraries.filter { ["movies", "tvshows"].contains($0.CollectionType ?? "") }
+        var out: [JFItem] = []
+        for lib in libs { out += (model.latest[lib.Id] ?? []).filter { $0.BackdropImageTags?.isEmpty == false }.prefix(4) }
+        return Array(out.prefix(8))
+    }
+
+    private func sectionHeader(_ title: String, icon: String, tint: Color, more: Bool = false) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(tint.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(title).font(.title3.weight(.bold))
+            Spacer()
+            if more {
+                HStack(spacing: 2) {
+                    Text("전체 보기").font(.subheadline)
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                }
+                .foregroundStyle(.secondary)
             }
+        }
+        .padding(.horizontal, 16)
+        .contentShape(Rectangle())
+    }
+
+    static func icon(_ type: String?) -> String {
+        switch type {
+        case "movies": return "film.fill"
+        case "tvshows": return "tv.fill"
+        case "music": return "music.note"
+        case "homevideos": return "video.fill"
+        case "boxsets": return "square.stack.fill"
+        default: return "folder.fill"
+        }
+    }
+
+    static func tint(_ type: String?) -> Color {
+        switch type {
+        case "movies": return .orange
+        case "tvshows": return .blue
+        case "music": return .pink
+        case "homevideos": return .green
+        default: return .gray
         }
     }
 }
@@ -328,17 +375,20 @@ private struct JFImage: View {
 struct PosterCard: View {
     let item: JFItem
     var square = false
+    /// 미디어 첫 화면용 큰 포스터 (아이패드는 더 크게)
+    var large = false
+    private var w: CGFloat { large ? (UIDevice.current.userInterfaceIdiom == .pad ? 160 : 128) : 112 }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            JFImage(url: JellyfinSession.shared.imageURL(item, width: 360))
-                .frame(width: 112, height: square ? 112 : 168)
+            JFImage(url: JellyfinSession.shared.imageURL(item, width: 400))
+                .frame(width: w, height: square ? w : w * 1.5)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(alignment: .bottom) { ProgressStrip(progress: item.progress) }
             Text(item.Name ?? "").font(.caption.weight(.medium)).lineLimit(2)
-                .frame(width: 112, alignment: .leading)
+                .frame(width: w, alignment: .leading)
             if !item.subtitle.isEmpty {
                 Text(item.subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    .frame(width: 112, alignment: .leading)
+                    .frame(width: w, alignment: .leading)
             }
         }
     }
@@ -370,6 +420,121 @@ struct UpNextPoster: View {
             }
         }
         .contentShape(Rectangle())
+    }
+}
+
+/// 맨 위 큰 배경 그림 넘기기 (최근 추가된 영화·시리즈)
+struct HeroCarousel: View {
+    let items: [JFItem]
+    @State private var page = 0
+    var body: some View {
+        let height: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 380 : 230
+        TabView(selection: $page) {
+            ForEach(Array(items.enumerated()), id: \.element.Id) { index, item in
+                Button { MediaPlay.play(item, in: [item]) } label: {
+                    ZStack(alignment: .bottomLeading) {
+                        Color.black
+                            .overlay { JFImage(url: JellyfinSession.shared.imageURL(item, backdrop: true, width: 1280)) }
+                            .clipped()
+                        LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.SeriesName ?? item.Name ?? "")
+                                .font(.title2.weight(.heavy)).foregroundStyle(.white).lineLimit(1)
+                            HStack(spacing: 8) {
+                                Label("재생", systemImage: "play.fill")
+                                    .font(.subheadline.weight(.bold))
+                                    .padding(.horizontal, 14).padding(.vertical, 7)
+                                    .background(.white, in: Capsule())
+                                    .foregroundStyle(.black)
+                                if let year = item.ProductionYear {
+                                    Text(String(year)).font(.subheadline).foregroundStyle(.white.opacity(0.85))
+                                }
+                            }
+                        }
+                        .padding(18)
+                        .padding(.bottom, 14)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.horizontal, 16)
+                }
+                .buttonStyle(.plain)
+                .tag(index)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .always))
+        .frame(height: height)
+        .task(id: items.count) {
+            // 6초마다 다음 그림으로
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                guard items.count > 1 else { continue }
+                withAnimation(.easeInOut(duration: 0.5)) { page = (page + 1) % items.count }
+            }
+        }
+    }
+}
+
+/// 이어서 보기: 멈춘 장면(서버 미리보기 이미지가 있으면) 또는 에피소드 장면·배경·포스터
+struct ResumeCard: View {
+    let item: JFItem
+    private var width: CGFloat { UIDevice.current.userInterfaceIdiom == .pad ? 320 : 250 }
+    var body: some View {
+        let height = width * 9 / 16
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack {
+                Color(.secondarySystemBackground)
+                if let f = item.pausedFrame {
+                    // 미리보기 묶음 이미지에서 멈춘 위치의 한 칸만 보여 준다
+                    let cellW = max(width, height * f.aspect)
+                    let cellH = cellW / f.aspect
+                    AsyncImage(url: f.url) { phase in
+                        if let image = phase.image {
+                            image.resizable()
+                                .frame(width: cellW * CGFloat(f.cols), height: cellH * CGFloat(f.rows))
+                                .offset(x: -cellW * CGFloat(f.col), y: -cellH * CGFloat(f.row))
+                                .frame(width: cellW, height: cellH, alignment: .topLeading)
+                                .clipped()
+                        } else if phase.error != nil {
+                            fallback
+                        } else {
+                            Color(.secondarySystemBackground)
+                        }
+                    }
+                } else {
+                    fallback
+                }
+                Image(systemName: "play.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(.black.opacity(0.45), in: Circle())
+            }
+            .frame(width: width, height: height)
+            .clipped()
+            .overlay(alignment: .bottom) { ProgressStrip(progress: item.progress) }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Text(item.SeriesName ?? item.Name ?? "").font(.subheadline.weight(.semibold)).lineLimit(1)
+                .frame(width: width, alignment: .leading)
+            Text(remaining).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .frame(width: width, alignment: .leading)
+        }
+    }
+
+    private var fallback: some View {
+        // 에피소드는 그 회차 장면(Primary), 영화는 배경 그림, 없으면 포스터
+        let s = JellyfinSession.shared
+        let url = item.SeriesId != nil && item.ImageTags?["Primary"] != nil
+            ? s.imageURL(item, width: 640)
+            : (s.imageURL(item, backdrop: true, width: 640) ?? s.imageURL(item, width: 640))
+        return JFImage(url: url)
+    }
+
+    private var remaining: String {
+        let total = Double(item.RunTimeTicks ?? 0) / 10_000_000
+        let left = max(0, total - item.resumeSeconds)
+        let head = item.SeriesName != nil ? item.title + " · " : ""
+        return left > 60 ? head + "\(Int(left / 60))분 남음" : head
     }
 }
 

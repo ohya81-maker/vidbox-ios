@@ -192,6 +192,7 @@ actor StreamResolver {
             throw AppError.noPlayableStream
         }
 
+        CaptionStore.shared.save(id, json["captions"])
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
         // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
         let allAudio = formats.filter { $0.isAudio }
@@ -983,4 +984,37 @@ final class BlockClock: @unchecked Sendable {
     private var until = Date.distantPast
     var isBlocked: Bool { lock.lock(); defer { lock.unlock() }; return Date() < until }
     func block(minutes: Double) { lock.lock(); until = Date().addingTimeInterval(minutes * 60); lock.unlock() }
+}
+
+
+/// YouTube 자막 목록 (player 응답의 captionTracks). 자막은 앱이 WebVTT로 받아 직접 그린다
+final class CaptionStore: @unchecked Sendable {
+    static let shared = CaptionStore()
+    struct Track { let url: String; let language: String; let isAuto: Bool }
+    private let lock = NSLock()
+    private var map: [String: [Track]] = [:]
+
+    func save(_ id: String, _ captions: Any?) {
+        let renderer = (captions as? [String: Any])?["playerCaptionsTracklistRenderer"] as? [String: Any]
+        let list = (renderer?["captionTracks"] as? [[String: Any]] ?? []).compactMap { t -> Track? in
+            guard let url = t["baseUrl"] as? String else { return nil }
+            return Track(url: url, language: (t["languageCode"] as? String ?? "").lowercased(),
+                         isAuto: (t["kind"] as? String) == "asr")
+        }
+        lock.lock(); map[id] = list; lock.unlock()
+    }
+
+    func tracks(_ id: String) -> [Track]? {
+        lock.lock(); defer { lock.unlock() }
+        return map[id]
+    }
+
+    /// 한국어 자막 → 한국어 자동 자막 → 다른 언어 자막 → 아무거나
+    func best(_ id: String) -> Track? {
+        guard let list = tracks(id), !list.isEmpty else { return nil }
+        return list.first { $0.language.hasPrefix("ko") && !$0.isAuto }
+            ?? list.first { $0.language.hasPrefix("ko") }
+            ?? list.first { !$0.isAuto }
+            ?? list.first
+    }
 }

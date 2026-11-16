@@ -354,8 +354,47 @@ final class PlayerManager: ObservableObject {
         }
     }
 
-    /// YouTube 자막: 꺼져 있으면 끄고, 켜져 있으면 한국어(없으면 첫 번째)를 켠다
+    /// YouTube 자막(CC): YouTube에서 자막 파일(WebVTT)을 받아 앱이 직접 그린다.
+    /// 영상 스트림 안에는 자막이 거의 없어서(중계 재생) 예전 방식으로는 버튼이 동작하지 않았다
     private func applyCaptions(_ item: AVPlayerItem) {
+        guard let id = current?.id else { return }
+        Task { @MainActor in
+            if let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) { item.select(nil, in: group) }
+        }
+        stopSubtitles()
+        guard let track = CaptionStore.shared.best(id) else {
+            applyNativeCaptions(item)
+            return
+        }
+        hasCaptions = true
+        guard captionsOn else { return }
+        let sep = track.url.contains("?") ? "&" : "?"
+        guard let url = URL(string: track.url + sep + "fmt=vtt") else { return }
+        Task { [weak self] in
+            var request = URLRequest(url: url)
+            request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
+            let text = (try? await URLSession.shared.data(for: request)).flatMap { String(data: $0.0, encoding: .utf8) } ?? ""
+            var cues = SubtitleParser.parse(text)
+            if track.isAuto {
+                // 자동 자막은 줄이 굴러 올라가며 겹쳐 나온다 → 아주 짧은 칸은 빼고 마지막 줄만
+                cues = cues.filter { $0.end - $0.start > 0.05 }.map {
+                    SubtitleCue(start: $0.start, end: $0.end, text: $0.text.components(separatedBy: "
+").last ?? $0.text)
+                }
+            }
+            guard let self, self.current?.id == id, self.captionsOn else { return }
+            if cues.isEmpty {
+                PlaybackDiag.note("captions empty for \(id) (\(text.count) bytes)")
+                if let item = self.player.currentItem { self.applyNativeCaptions(item) }
+                return
+            }
+            self.subtitles.reset(cues)
+            self.startSubtitleTimer()
+        }
+    }
+
+    /// 예비: 영상 스트림 안의 자막 트랙
+    private func applyNativeCaptions(_ item: AVPlayerItem) {
         Task { @MainActor in
             guard let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) else {
                 hasCaptions = false
@@ -540,6 +579,8 @@ final class PlayerManager: ObservableObject {
     func setFullscreen(_ on: Bool) {
         guard on != isFullscreen else { return }
         isFullscreen = on
+        // 아이패드는 화면을 돌리지 않는다 (돌리기를 요청하면 iPadOS가 앱 창을 작게 만든다)
+        if UIDevice.current.userInterfaceIdiom == .pad { return }
         OrientationController.rotate(to: on ? .landscapeRight : .portrait)
     }
 
@@ -950,6 +991,7 @@ enum OrientationController {
 
     /// 특정 방향으로 돌린다 (전체화면 버튼)
     static func rotate(to mask: UIInterfaceOrientationMask) {
+        if UIDevice.current.userInterfaceIdiom == .pad { return }
         if !AppDelegate.orientationLock.contains(mask) {
             AppDelegate.orientationLock = .allButUpsideDown
         }
