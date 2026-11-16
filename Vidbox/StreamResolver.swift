@@ -491,6 +491,22 @@ final class LocalHLS: @unchecked Sendable {
         NotificationCenter.default.post(name: Self.didRestart, object: nil)
     }
 
+    private var lastHeal = Date.distantPast
+    /// 재생 항목이 127.0.0.1에 연결하지 못했다(-1004 등)면 중계 서버가 죽은 것 → 10초에 한 번까지 새로 켠다
+    func healIfDead(_ item: AVPlayerItem?) {
+        guard let error = item?.error as NSError?,
+              error.domain == NSURLErrorDomain,
+              [NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut].contains(error.code)
+        else { return }
+        lock.lock()
+        let due = Date().timeIntervalSince(lastHeal) > 10
+        if due { lastHeal = Date() }
+        lock.unlock()
+        guard due else { return }
+        PlaybackDiag.note("proxy dead (\(error.code)) → restart")
+        Task { await restart() }
+    }
+
     func baseURL() async throws -> String {
         if let port = currentPort() { return "http://127.0.0.1:\(port)" }
         let port = try await startServer()

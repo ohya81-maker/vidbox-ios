@@ -300,6 +300,7 @@ final class ShortsPlayer: ObservableObject {
                 Task { @MainActor in
                     guard let self, let slot = self.slots[slotID], slot.player.currentItem === item else { return }
                     PlaybackDiag.note("shorts candidate failed fast: " + PlaybackDiag.describe(item))
+                    LocalHLS.shared.healIfDead(item)
                     slot.player.replaceCurrentItem(with: nil)
                     await self.tryCandidate(slot, from: slot.candidateIndex + 1)
                 }

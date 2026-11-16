@@ -662,6 +662,7 @@ final class PlayerManager: ObservableObject {
     private func failover(item: VideoItem) {
         guard current?.id == item.id else { return }
         PlaybackDiag.note("failover from \(sourceKind): " + PlaybackDiag.describe(player.currentItem))
+        LocalHLS.shared.healIfDead(player.currentItem)
         watchdog?.cancel()
         let position = max(0, currentTime)
         candidateIndex += 1
