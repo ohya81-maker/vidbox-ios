@@ -10,6 +10,7 @@ struct PlayerView: View {
     @State private var showDescription = false
     @State private var showSave = false
     @State private var showDownload = false
+    @State private var relatedFilter = 0
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -158,10 +159,14 @@ struct PlayerView: View {
 
     private var upNext: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(player.isQueueMode ? "재생목록" : "다음 동영상")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14)
-            let list = player.isQueueMode ? player.queue : player.related
+            if player.isQueueMode {
+                Text("재생목록")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 14)
+            } else {
+                relatedChips
+            }
+            let list = player.isQueueMode ? player.queue : filteredRelated
             if list.isEmpty {
                 ProgressView().frame(maxWidth: .infinity).padding()
             }
@@ -175,10 +180,40 @@ struct PlayerView: View {
                 LazyVStack(spacing: 18) {
                     ForEach(list) { item in
                         VideoCard(item: item)
-                            .onAppear { player.loadMoreRelatedIfNeeded(current: item) }
+                            .onAppear {
+                                // 필터로 일부만 보일 때도 끝에 닿으면 전체 목록을 더 불러온다
+                                let anchor = item.id == list.last?.id ? (player.related.last ?? item) : item
+                                player.loadMoreRelatedIfNeeded(current: anchor)
+                            }
                     }
                 }
             }
+        }
+        .onChange(of: player.current?.id) { _, _ in relatedFilter = 0 }
+    }
+
+    /// YouTube처럼 다음 영상 위의 필터: 모두 / 이 채널 / 관련 콘텐츠(다른 채널)
+    private var filteredRelated: [VideoItem] {
+        guard let channel = player.current?.channel, !channel.isEmpty else { return player.related }
+        switch relatedFilter {
+        case 1: return player.related.filter { $0.channel == channel }
+        case 2: return player.related.filter { $0.channel != channel }
+        default: return player.related
+        }
+    }
+
+    private var relatedChips: some View {
+        let channel = player.current?.channel ?? ""
+        let titles = channel.isEmpty ? ["모두"] : ["모두", "\(channel) 제공", "관련 콘텐츠"]
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(titles.indices, id: \.self) { index in
+                    ChipButton(title: titles[index], isOn: index == relatedFilter) {
+                        relatedFilter = index
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
         }
     }
 }
