@@ -914,17 +914,20 @@ struct CommentsPanel: View {
             )
             Divider()
 
-            List {
-                ForEach(comments) { c in
-                    CommentRow(comment: c)
-                        .listRowSeparator(.hidden)
-                        .onAppear { if c.id == comments.last?.id { Task { await loadMore() } } }
+            // List 대신 ScrollView: 답글을 펼칠 때 아래 댓글들이 자연스럽게 밀려 내려간다
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(comments) { c in
+                        CommentRow(comment: c)
+                            .onAppear { if c.id == comments.last?.id { Task { await loadMore() } } }
+                    }
+                    if loading {
+                        ProgressView().frame(maxWidth: .infinity).padding()
+                    }
                 }
-                if loading {
-                    ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
-                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
-            .listStyle(.plain)
             .scrollDismissesKeyboard(.interactively)
             // 목록 맨 위에서 아래로 더 당기면 닫는다
             .onScrollGeometryChange(for: Bool.self) { geo in
@@ -1087,11 +1090,11 @@ struct CommentRow: View {
                 .padding(.top, 6)
             }
 
-            if showReplies {
+            // YouTube처럼: 버튼 아래로 답글 영역이 위에서부터 펼쳐져 내려온다 (높이 0 → 원래 높이, 위쪽 기준으로 잘라 보여 줌)
+            if loadedOnce {
                 VStack(alignment: .leading, spacing: 16) {
                     ForEach(replies) { r in
                         CommentRow(comment: r, isReply: true)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                     if let next = repliesNext {
                         Button { Task { await loadReplies(next, expandAfter: false) } } label: {
@@ -1110,7 +1113,11 @@ struct CommentRow: View {
                 }
                 .padding(.leading, 46)
                 .padding(.top, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: showReplies ? nil : 0, alignment: .top)
                 .clipped()
+                .opacity(showReplies ? 1 : 0)
+                .allowsHitTesting(showReplies)
             }
         }
         .padding(.vertical, isReply ? 0 : 8)
