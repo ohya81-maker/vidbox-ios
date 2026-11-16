@@ -1080,7 +1080,7 @@ struct CommentRow: View {
                         Text("답글 \(count)개")
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(.primary)
                     .padding(.vertical, 8)
                     .padding(.horizontal, 10)
                     .contentShape(Rectangle())
@@ -1104,7 +1104,7 @@ struct CommentRow: View {
                                 Text("답글 더보기")
                             }
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.primary)
                             .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
