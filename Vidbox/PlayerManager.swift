@@ -96,6 +96,7 @@ final class PlayerManager: ObservableObject {
     private var artwork: MPMediaItemArtwork?
     private var isInBackground = false
     private var backgroundedAt: Date?
+    private var lastJellyfinReport = Date.distantPast
     private let layers = NSHashTable<AVPlayerLayer>.weakObjects()
     // 재생 후보와 자동 전환(감시 장치)
     private var candidates: [PlaybackSource] = []
@@ -167,7 +168,12 @@ final class PlayerManager: ObservableObject {
 
     // MARK: - Public controls
 
-    func play(_ item: VideoItem, queue newQueue: [VideoItem]? = nil, audio: Bool? = nil, expand: Bool = true) {
+    func play(_ item: VideoItem, queue newQueue: [VideoItem]? = nil, audio: Bool? = nil, expand: Bool = true,
+              startAt: Double = 0, upNextList: [VideoItem]? = nil) {
+        // 이전 Jellyfin 영상은 멈춘 위치를 서버에 알린다 (웹·TV에서 이어 보기)
+        if let prev = current, JellyfinCatalog.isJellyfin(prev.id), prev.id != item.id {
+            JellyfinAPI.report("stop", itemID: String(prev.id.dropFirst(3)), seconds: currentTime)
+        }
         let continuingQueue = newQueue == nil && queue.contains { $0.id == item.id }
         if let newQueue {
             queue = newQueue
@@ -201,7 +207,18 @@ final class PlayerManager: ObservableObject {
         loadArtwork(for: item)
 
         userPaused = false
-        beginLoading(item: item, audio: audioOnly, position: 0, autoPlay: true)
+        beginLoading(item: item, audio: audioOnly, position: startAt, autoPlay: true)
+        if JellyfinCatalog.isJellyfin(item.id) {
+            // 내 미디어(Jellyfin): YouTube 추천·댓글 대신 다음 화(같은 시즌·앨범)를 다음 영상으로
+            related = upNextList ?? []
+            relatedToken = nil
+            relatedLoading = false
+            watchInfo = nil
+            commentsPreview = nil
+            lastJellyfinReport = Date()
+            JellyfinAPI.report("start", itemID: String(item.id.dropFirst(3)), seconds: startAt)
+            return
+        }
         AccountStore.shared.markWatched(item.id)
 
         relatedToken = nil
@@ -386,6 +403,9 @@ final class PlayerManager: ObservableObject {
     }
 
     func stop() {
+        if let prev = current, JellyfinCatalog.isJellyfin(prev.id) {
+            JellyfinAPI.report("stop", itemID: String(prev.id.dropFirst(3)), seconds: currentTime)
+        }
         loadTask?.cancel()
         watchdog?.cancel()
         seekWatchdog?.cancel()
@@ -573,7 +593,7 @@ final class PlayerManager: ObservableObject {
                     self.duration = seconds.isFinite ? seconds : 0
                     self.updateNowPlaying()
                     // 재생기가 길이를 실제보다 길게(예: 2배) 계산하면 YouTube가 알려준 길이로 바로잡는다
-                    if let id = self.current?.id {
+                    if let id = self.current?.id, !JellyfinCatalog.isJellyfin(id) {
                         Task { @MainActor in
                             if let real = await StreamResolver.shared.length(id: id), real > 0,
                                self.current?.id == id, self.duration > real * 1.3 {
@@ -629,6 +649,12 @@ final class PlayerManager: ObservableObject {
             Task { @MainActor in
                 guard let self, seconds.isFinite else { return }
                 self.currentTime = seconds
+                if let id = self.current?.id, JellyfinCatalog.isJellyfin(id),
+                   Date().timeIntervalSince(self.lastJellyfinReport) > 10 {
+                    self.lastJellyfinReport = Date()
+                    JellyfinAPI.report("progress", itemID: String(id.dropFirst(3)), seconds: seconds,
+                                       paused: self.player.timeControlStatus == .paused)
+                }
             }
         }
 

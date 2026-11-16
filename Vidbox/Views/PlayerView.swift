@@ -252,30 +252,36 @@ struct PlayerView: View {
 
     private func iconActions(_ item: VideoItem) -> some View {
         let saved = library.isInAnyFolder(item)
+        // 내 미디어(Jellyfin) 영상은 YouTube 전용인 다운로드·공유를 숨긴다
+        let isJF = JellyfinCatalog.isJellyfin(item.id)
         return HStack(spacing: 2) {
             iconButton(saved ? "checkmark.circle.fill" : "plus.circle", label: "저장") { showSave = true }
             // 다운로드: 영상(소리 포함) 또는 음원만
-            Button { showDownload = true } label: {
-                DownloadIconLabel(id: item.id).frame(width: 38, height: 38).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("다운로드")
-            .confirmationDialog("다운로드", isPresented: $showDownload, titleVisibility: .visible) {
-                downloadButtons(item)
-            } message: {
-                Text("받아 두면 인터넷 없이 재생할 수 있어요. 보관함 → 오프라인 저장에서 볼 수 있습니다.")
+            if !isJF {
+                Button { showDownload = true } label: {
+                    DownloadIconLabel(id: item.id).frame(width: 38, height: 38).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("다운로드")
+                .confirmationDialog("다운로드", isPresented: $showDownload, titleVisibility: .visible) {
+                    downloadButtons(item)
+                } message: {
+                    Text("받아 두면 인터넷 없이 재생할 수 있어요. 보관함 → 오프라인 저장에서 볼 수 있습니다.")
+                }
             }
             iconButton("infinity", label: "자동재생", tint: player.autoplay ? .accentColor : nil) {
                 player.autoplay.toggle()
             }
-            ShareLink(item: item.shareURL) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 19, weight: .regular))
-                    .frame(width: 38, height: 38)
-                    .contentShape(Rectangle())
+            if !isJF {
+                ShareLink(item: item.shareURL) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 19, weight: .regular))
+                        .frame(width: 38, height: 38)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("공유")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("공유")
         }
     }
 

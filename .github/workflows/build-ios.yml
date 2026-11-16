@@ -58,6 +58,18 @@ jobs:
             build 2>&1 | tee build.log | grep -E "error:|warning: .*Vidbox/|BUILD (SUCCEEDED|FAILED)" || true
           test -d build/Build/Products/Release-iphoneos/Vidbox.app
 
+      # 「미디어」 탭 자동 로그인용 계정 (저장소에는 없고 GitHub Secrets에만: JF_GUEST_USER / JF_GUEST_PASS)
+      - name: Add Jellyfin auto-login
+        env:
+          JF_USER: ${{ secrets.JF_GUEST_USER }}
+          JF_PASS: ${{ secrets.JF_GUEST_PASS }}
+        run: |
+          if [ -z "$JF_USER" ]; then echo "자동 로그인 계정 없음 (건너뜀)"; exit 0; fi
+          PLIST=build/Build/Products/Release-iphoneos/Vidbox.app/Info.plist
+          plutil -replace JFAutoUser -string "$JF_USER" "$PLIST"
+          plutil -replace JFAutoPass -string "$JF_PASS" "$PLIST"
+          echo "자동 로그인 계정 넣음"
+
       - name: Package IPA
         run: |
           mkdir -p Payload

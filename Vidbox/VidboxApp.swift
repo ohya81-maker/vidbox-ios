@@ -19,7 +19,7 @@ struct VidboxApp: App {
 }
 
 enum AppTab: String, Hashable {
-    case home, shorts, music, kids, library, search
+    case home, shorts, music, kids, media, library, search
 }
 
 struct RootView: View {
@@ -54,6 +54,11 @@ struct RootView: View {
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("KIDS") } icon: { Image(uiImage: UIImage(systemName: tab == .kids ? "face.smiling.inverse" : "face.smiling")!) }
+            }
+            Tab(value: AppTab.media) {
+                MediaView().miniPlayerInset()
+            } label: {
+                Label { Text("미디어") } icon: { Image(uiImage: UIImage(systemName: tab == .media ? "play.tv.fill" : "play.tv")!) }
             }
             Tab(value: AppTab.search, role: .search) {
                 SearchView(text: $searchText, query: $searchQuery).miniPlayerInset()

@@ -68,6 +68,12 @@ actor StreamResolver {
     // MARK: Public
 
     func candidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
+        // 내 미디어(Jellyfin) 영상
+        if JellyfinCatalog.isJellyfin(id) {
+            let list = JellyfinCatalog.shared.sources(for: id, audioOnly: audioOnly)
+            if list.isEmpty { throw AppError.noPlayableStream }
+            return list
+        }
         // 다운로드해 둔 파일이 있으면 그것부터 (인터넷 없이 재생)
         let offline = DownloadIndex.shared.files(for: id, audioOnly: audioOnly).map { PlaybackSource.single($0) }
         guard let entry = try? await entry(for: id) else {
@@ -82,7 +88,7 @@ actor StreamResolver {
 
     /// 백그라운드로 미리 준비. 동시에 너무 많이 요청하지 않도록 4개로 제한.
     func prefetch(_ ids: [String]) {
-        for id in ids {
+        for id in ids where !JellyfinCatalog.isJellyfin(id) {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
             guard inflight[id] == nil, prefetching < 4 else { continue }
             prefetching += 1
