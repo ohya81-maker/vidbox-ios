@@ -210,7 +210,7 @@ with open(os.path.join(args.out, "index.html"), "w", encoding="utf-8") as f:
     f.write(page)
 
 # 기기 등록(PHP) 파일들
-for name in ("register.html", "enroll.php", "udid.php", "status.php", "lib.php", "invite.php", "testflight.html"):
+for name in ("register.html", "enroll.php", "udid.php", "status.php", "lib.php", "invite.php", "testflight.html", "diag.php"):
     shutil.copyfile(os.path.join(ROOT, "site", name), os.path.join(args.out, name))
 
 # 설치 페이지 QR (외부 스크립트 없이 이미지로)

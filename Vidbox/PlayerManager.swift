@@ -592,6 +592,8 @@ final class PlayerManager: ObservableObject {
         guard current?.id == item.id else { return }
         isLoading = false
         errorMessage = "재생할 수 없는 영상입니다."
+        PlaybackDiag.report("video", id: item.id,
+                            details: ["candidates=\(candidates.map(\.kind))", "last=" + PlaybackDiag.describe(player.currentItem)])
     }
 
     /// 재생 시작 9초 뒤에도 시간이 흐르지 않으면 다음 후보로 전환
@@ -611,6 +613,7 @@ final class PlayerManager: ObservableObject {
 
     private func failover(item: VideoItem) {
         guard current?.id == item.id else { return }
+        PlaybackDiag.note("failover from \(sourceKind): " + PlaybackDiag.describe(player.currentItem))
         watchdog?.cancel()
         let position = max(0, currentTime)
         candidateIndex += 1

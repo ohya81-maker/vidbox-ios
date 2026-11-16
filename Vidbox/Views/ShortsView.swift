@@ -198,6 +198,7 @@ final class ShortsPlayer: ObservableObject {
         slot.loadTask = Task { [weak self] in
             guard let list = try? await StreamResolver.shared.candidates(id: id, audioOnly: false) else {
                 guard !Task.isCancelled, let self else { return }
+                PlaybackDiag.report("shorts-resolve", id: id, details: [])
                 slot.failed = true
                 if self.currentID == id { self.failed = true; self.showSpinner = false }
                 return
@@ -222,6 +223,8 @@ final class ShortsPlayer: ObservableObject {
             i += 1
         }
         guard slots[slot.id] === slot else { return }
+        PlaybackDiag.report("shorts", id: slot.id, details: ["candidates=\(slot.candidates.map(\.kind))",
+                                                              "last=" + PlaybackDiag.describe(slot.player.currentItem)])
         slot.failed = true
         if currentID == slot.id { failed = true; showSpinner = false }
     }
@@ -276,6 +279,8 @@ final class ShortsPlayer: ObservableObject {
                 if self.isReady || self.isPaused || self.failed { return }
                 if slot.candidates.isEmpty { continue }   // 아직 주소를 받는 중
                 guard slot.candidateIndex + 1 < slot.candidates.count else {
+                    PlaybackDiag.report("shorts-stall", id: id, details: ["candidates=\(slot.candidates.map(\.kind))",
+                                                                         "last=" + PlaybackDiag.describe(slot.player.currentItem)])
                     self.failed = true
                     self.showSpinner = false
                     return

@@ -170,11 +170,15 @@ actor StreamResolver {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await URLSession.shared.data(for: request)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (json["playabilityStatus"] as? [String: Any])?["status"] as? String == "OK",
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let playability = json?["playabilityStatus"] as? [String: Any]
+        guard let json, playability?["status"] as? String == "OK",
               let streaming = json["streamingData"] as? [String: Any]
-        else { throw AppError.noPlayableStream }
+        else {
+            PlaybackDiag.note("player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")")
+            throw AppError.noPlayableStream
+        }
 
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
         // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
@@ -885,5 +889,43 @@ final class HedgedStream: NSObject, URLSessionDataDelegate, @unchecked Sendable 
             lock.unlock()
             done?(result)
         }
+    }
+}
+
+
+// MARK: - 재생 실패 진단 (실패했을 때만 집 NAS로 짧은 기록을 보낸다: 원인 파악용)
+
+enum PlaybackDiag {
+    nonisolated(unsafe) private static var notes: [String] = []
+    private static let lock = NSLock()
+
+    static func note(_ s: String) {
+        lock.lock(); notes.append(s); if notes.count > 30 { notes.removeFirst(notes.count - 30) }; lock.unlock()
+    }
+
+    static func report(_ kind: String, id: String, details: [String]) {
+        lock.lock(); let recent = notes; notes.removeAll(); lock.unlock()
+        let body: [String: Any] = [
+            "kind": kind, "id": id,
+            "app": (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
+                + "(" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?") + ")",
+            "details": details, "notes": recent,
+        ]
+        guard let url = URL(string: "https://mistylake.synology.me/ktube/diag.php"),
+              let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        request.timeoutInterval = 10
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
+    /// AVPlayerItem 오류 요약 (HTTP 상태·주소의 서버 이름)
+    static func describe(_ item: AVPlayerItem?) -> String {
+        guard let item else { return "item=nil" }
+        let err = item.error.map { ($0 as NSError).domain + " " + String(($0 as NSError).code) + " " + $0.localizedDescription } ?? "-"
+        let log = item.errorLog()?.events.suffix(3).map { "\($0.errorStatusCode) \($0.errorDomain) \(URL(string: $0.uri ?? "")?.host ?? "-") \($0.errorComment ?? "")" } ?? []
+        return "status=\(item.status.rawValue) err=\(err) log=\(log)"
     }
 }
