@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>K-TUBE TestFlight 설치</title>
+<link rel="apple-touch-icon" href="icon.png">
+<style>
+  :root { --bg:#f4f4f8; --text:#15151a; --sub:#61616b; --card:rgba(255,255,255,.75); --hair:rgba(20,20,30,.1); --accent:#e5262c; --field:#fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b0b10; --text:#f4f4f7; --sub:#a0a0ab; --card:rgba(38,38,48,.6); --hair:rgba(255,255,255,.1); --field:#1b1b22; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:28px 16px 48px; }
+  h1 { font-size:24px; margin:8px 0 4px; letter-spacing:-.4px; }
+  h2 { font-size:17px; margin:0 0 10px; }
+  .sub { color:var(--sub); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--hair); border-radius:20px; padding:20px; margin-bottom:14px; }
+  label { display:block; font-size:13px; color:var(--sub); margin:12px 0 4px; }
+  input { width:100%; padding:13px 14px; border-radius:12px; border:1px solid var(--hair); background:var(--field); color:var(--text); font-size:16px; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  .btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:15px; border-radius:14px; margin-top:16px;
+         background:var(--accent); color:#fff; font-weight:700; font-size:17px; text-decoration:none; border:0; cursor:pointer; }
+  .btn.secondary { background:transparent; color:var(--text); border:1px solid var(--hair); font-weight:600; }
+  .btn:disabled { opacity:.5; }
+  ol { padding-left:20px; margin:10px 0 0; color:var(--sub); } ol li { margin:6px 0; }
+  b { color:var(--text); }
+  .msg { margin:12px 0 0; font-size:14px; } .err { color:var(--accent); }
+  .state { display:flex; gap:12px; align-items:center; font-weight:600; }
+  .spin { width:20px; height:20px; border:3px solid var(--hair); border-top-color:var(--accent); border-radius:50%; animation:s 1s linear infinite; flex:none; }
+  @keyframes s { to { transform:rotate(360deg); } }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <a href="./" style="color:var(--sub);text-decoration:none">‹ 설치 페이지</a>
+  <h1>TestFlight로 설치</h1>
+  <p class="sub">개발자 모드 없이 설치돼요. 처음 한 번만 신청하면 이후 업데이트는 TestFlight에서 받아요.</p>
+
+  <section class="card" id="form">
+    <h2>1. 신청</h2>
+    <label for="code">초대 코드</label>
+    <input id="code" autocomplete="off" autocapitalize="characters" placeholder="받은 초대 코드">
+    <label for="email">Apple ID 이메일</label>
+    <input id="email" type="email" autocomplete="email" autocapitalize="off" placeholder="아이폰에 로그인된 Apple ID">
+    <div class="row">
+      <div><label for="last">성</label><input id="last" autocomplete="family-name"></div>
+      <div><label for="first">이름</label><input id="first" autocomplete="given-name"></div>
+    </div>
+    <button class="btn" id="go">신청하기</button>
+    <p class="msg err hidden" id="formerr"></p>
+  </section>
+
+  <section class="card hidden" id="invited">
+    <h2>2. Apple 초대 메일 수락</h2>
+    <ol>
+      <li><b>Apple</b>에서 온 「App Store Connect에 참여하도록 초대받았습니다」 메일을 엽니다. (스팸함도 확인)</li>
+      <li><b>초대 수락</b>을 누르고 같은 Apple ID로 로그인합니다.</li>
+      <li>이 화면으로 돌아오면 자동으로 다음 단계로 넘어가요.</li>
+    </ol>
+    <div class="state" style="margin-top:14px"><div class="spin"></div><span>수락을 기다리는 중…</span></div>
+    <button class="btn secondary" id="check">수락했어요</button>
+  </section>
+
+  <section class="card hidden" id="tester">
+    <h2>3. TestFlight에서 설치</h2>
+    <ol>
+      <li><b>TestFlight</b> 앱을 설치합니다. (Apple 공식 무료 앱)</li>
+      <li>Apple에서 온 「K-TUBE Player 테스트 초대」 메일의 <b>View in TestFlight</b>를 누르거나, TestFlight 앱을 열면 K-TUBE가 보여요.</li>
+      <li><b>설치</b>를 누르면 끝. 새 버전은 TestFlight에서 <b>업데이트</b>만 누르면 돼요.</li>
+    </ol>
+    <a class="btn" href="https://apps.apple.com/app/testflight/id899247664">TestFlight 앱 받기</a>
+    <a class="btn secondary" href="itms-beta://">TestFlight 열기</a>
+  </section>
+</main>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function show(id) { ["form","invited","tester"].forEach(function (x) { $(x).classList.toggle("hidden", x !== id); }); }
+  function load(k) { try { return localStorage.getItem("ktube.tf." + k) || ""; } catch (e) { return ""; } }
+  function save(k, v) { try { localStorage.setItem("ktube.tf." + k, v); } catch (e) {} }
+  var q = new URLSearchParams(location.search);
+  $("code").value = q.get("code") || load("code");
+  $("email").value = load("email"); $("first").value = load("first"); $("last").value = load("last");
+
+  var texts = {
+    badcode: "초대 코드가 맞지 않아요.", bademail: "이메일 형식을 확인해 주세요.",
+    busy: "신청이 많아요. 잠시 후 다시 시도해 주세요.", none: "아직 신청 기록이 없어요. 다시 신청해 주세요."
+  };
+  function call(action) {
+    return fetch("invite.php", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+      body: JSON.stringify({ action: action, code: $("code").value.trim(), email: $("email").value.trim(),
+                             first: $("first").value.trim(), last: $("last").value.trim() }) })
+      .then(function (r) { return r.json(); });
+  }
+  var timer = null;
+  function handle(s) {
+    if (s.state === "tester") { save("stage", "tester"); clearTimeout(timer); show("tester"); return; }
+    if (s.state === "invited") { save("stage", "invited"); show("invited"); clearTimeout(timer); timer = setTimeout(poll, 15000); return; }
+    show("form");
+    $("formerr").textContent = texts[s.state] || ("신청하지 못했어요: " + (s.detail || s.state));
+    $("formerr").classList.remove("hidden");
+  }
+  function poll() { if (document.visibilityState === "visible") call("check").then(handle).catch(function () { timer = setTimeout(poll, 20000); }); else timer = setTimeout(poll, 5000); }
+
+  $("go").onclick = function () {
+    ["code","email","first","last"].forEach(function (k) { save(k, $(k).value.trim()); });
+    $("formerr").classList.add("hidden");
+    $("go").disabled = true; $("go").textContent = "신청 중…";
+    call("request").then(handle).catch(function () { handle({ state: "error", detail: "네트워크 오류" }); })
+      .then(function () { $("go").disabled = false; $("go").textContent = "신청하기"; });
+  };
+  $("check").onclick = function () { call("check").then(handle); };
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && load("stage") === "invited") poll(); });
+
+  var stage = load("stage");
+  if (stage === "tester") show("tester");
+  else if (stage === "invited" && load("email")) { show("invited"); poll(); }
+})();
+</script>
+</body>
+</html>

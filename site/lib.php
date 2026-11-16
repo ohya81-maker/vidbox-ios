@@ -66,3 +66,53 @@ function kt_json($data): void {
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
+
+// ---- App Store Connect API (TestFlight 자동 초대) ----
+// .private/asc.php: <?php return ['key_id' => '...', 'issuer' => '...', 'p8' => "-----BEGIN PRIVATE KEY-----\n..."];
+// .private/invite.php: <?php return '초대코드';
+const KT_APP_ID = '6835250148';           // K-TUBE Player (com.mistylake.ktube)
+const KT_GROUP_NAME = 'K-TUBE 테스터';
+const KT_TESTERS = KT_PRIVATE . '/testers.php';
+
+function kt_b64url(string $s): string { return rtrim(strtr(base64_encode($s), '+/', '-_'), '='); }
+
+function kt_asc_token(): string {
+    static $tok = null;
+    if ($tok !== null) return $tok;
+    $k = @include KT_PRIVATE . '/asc.php';
+    if (!is_array($k)) throw new RuntimeException('asc key missing');
+    $now = time();
+    $input = kt_b64url(json_encode(['alg' => 'ES256', 'kid' => $k['key_id'], 'typ' => 'JWT'])) . '.' .
+             kt_b64url(json_encode(['iss' => $k['issuer'], 'iat' => $now, 'exp' => $now + 900, 'aud' => 'appstoreconnect-v1']));
+    $pkey = openssl_pkey_get_private($k['p8']);
+    if (!$pkey || !openssl_sign($input, $der, $pkey, OPENSSL_ALGO_SHA256)) throw new RuntimeException('sign failed');
+    // DER SEQUENCE{INTEGER r, INTEGER s} → r||s (각 32바이트)
+    $i = 2 + ((ord($der[1]) & 0x80) ? (ord($der[1]) & 0x7F) : 0);
+    $raw = '';
+    for ($n = 0; $n < 2; $n++) {
+        $len = ord($der[$i + 1]);
+        $raw .= str_pad(ltrim(substr($der, $i + 2, $len), "\x00"), 32, "\x00", STR_PAD_LEFT);
+        $i += 2 + $len;
+    }
+    return $tok = $input . '.' . kt_b64url($raw);
+}
+
+function kt_asc(string $method, string $path, $body = null): array {
+    $ch = curl_init(str_starts_with($path, 'http') ? $path : 'https://api.appstoreconnect.apple.com/v1' . $path);
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . kt_asc_token(), 'Content-Type: application/json'],
+    ]);
+    if ($body !== null) curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_UNICODE));
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return [$code, $resp ? json_decode($resp, true) : null];
+}
+
+function kt_asc_error(?array $js): string {
+    $e = $js['errors'][0] ?? null;
+    return $e ? trim(($e['title'] ?? '') . ' ' . ($e['detail'] ?? '')) : 'unknown';
+}

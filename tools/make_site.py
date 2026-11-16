@@ -147,8 +147,10 @@ for name in ("manifest.plist", "manifest.xml"):
 itms = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(f"{base}/manifest.xml", safe="")
 if signed:
     # 버튼 하나: 이 기기에서 등록을 마친 적이 있으면 바로 설치, 처음이면 등록(프로필) → 자동 설치
-    direct = (f'<a class="btn primary" id="ios-install" href="register.html?auto=1" data-itms="{itms}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이 아이폰에 설치</a>'
-              '<p class="hint" id="ios-hint">처음 설치하는 아이폰은 설정에서 등록 프로필을 한 번 설치하면, 몇 분 뒤 설치 창이 자동으로 떠요.</p>'
+    direct = ('<a class="btn primary" href="testflight.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>TestFlight로 설치 (추천)</a>'
+              '<p class="hint">개발자 모드가 필요 없어요. 초대 코드와 Apple ID 이메일로 한 번 신청하면 TestFlight 앱에서 설치·업데이트해요.</p>'
+              f'<a class="btn secondary" id="ios-install" href="register.html?auto=1" data-itms="{itms}" style="margin-top:14px">개발자 모드로 바로 설치</a>'
+              '<p class="hint" id="ios-hint">개발자 모드를 켠 아이폰용이에요. 처음이면 등록 프로필을 한 번 설치하면 몇 분 뒤 설치 창이 자동으로 떠요.</p>'
               f'<p class="hint"><a href="{itms}" style="color:inherit">이미 등록된 아이폰이면 여기를 눌러 바로 설치</a></p>'
               '<script>(function(){var b=document.getElementById("ios-install");'
               'try{if(localStorage.getItem("ktube.registered")==="1"){b.href=b.dataset.itms;'
@@ -191,7 +193,7 @@ with open(os.path.join(args.out, "index.html"), "w", encoding="utf-8") as f:
     f.write(page)
 
 # 기기 등록(PHP) 파일들
-for name in ("register.html", "enroll.php", "udid.php", "status.php", "lib.php"):
+for name in ("register.html", "enroll.php", "udid.php", "status.php", "lib.php", "invite.php", "testflight.html"):
     shutil.copyfile(os.path.join(ROOT, "site", name), os.path.join(args.out, name))
 
 # 설치 페이지 QR (외부 스크립트 없이 이미지로)
