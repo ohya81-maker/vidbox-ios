@@ -160,10 +160,25 @@ else:
               '서명된 IPA로 이 페이지를 다시 만들면 여기에 「바로 설치」 버튼이 생깁니다.</p>')
 
 # 안드로이드 APK (있으면)
+apk_version = ""
 apk_block = ('<p class="hint" style="margin:0">안드로이드 앱은 준비 중이에요. 완성되면 이 자리에 설치 버튼이 생깁니다.</p>')
 if args.apk and os.path.exists(args.apk):
-    apk_name = "KTUBE.apk"
+    # 안드로이드 버전(build.gradle.kts)을 파일 이름에 넣는다 → 배포할 때마다 새 주소라 예전 파일을 캐시에서 받지 않음
+    apk_version = ""
+    gradle = os.path.join(os.path.dirname(os.path.abspath(args.apk)), "app", "build.gradle.kts")
+    if os.path.exists(gradle):
+        g = open(gradle, encoding="utf-8").read()
+        vn = re.search(r'versionName\s*=\s*"([^"]+)"', g)
+        vc = re.search(r'versionCode\s*=\s*(\d+)', g)
+        if vn and vc:
+            apk_version = f"{vn.group(1)} ({vc.group(1)})"
+            apk_name = f"KTUBE-android-{vn.group(1)}-{vc.group(1)}.apk"
+    if not apk_version:
+        import hashlib
+        apk_name = "KTUBE-android-" + hashlib.sha1(open(args.apk, "rb").read()).hexdigest()[:8] + ".apk"
     shutil.copyfile(args.apk, os.path.join(args.out, apk_name))
+    # 예전에 공유한 주소(KTUBE.apk)도 계속 최신으로
+    shutil.copyfile(args.apk, os.path.join(args.out, "KTUBE.apk"))
     apk_mb = os.path.getsize(args.apk) / 1024 / 1024
     apk_block = (
         f'<a class="btn primary" href="{apk_name}" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>KTUBE.apk 내려받기 ({apk_mb:.1f}MB)</a>'
@@ -176,6 +191,7 @@ if args.apk and os.path.exists(args.apk):
 
 page = open(os.path.join(ROOT, "site", "index.html"), encoding="utf-8").read()
 page = page.replace("{{DIRECT_INSTALL}}", direct).replace("{{APK_INSTALL}}", apk_block)
+page = page.replace("<p>APK 파일로 설치</p>", f"<p>버전 {apk_version} · APK 파일로 설치</p>" if args.apk and apk_version else "<p>APK 파일로 설치</p>")
 source_url = f"{base}/apps.json"
 for key, value in {
     "{{VERSION}}": version,

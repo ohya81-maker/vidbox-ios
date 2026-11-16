@@ -44,5 +44,6 @@ cp -f dist/ktube/* "$NAS_DIR/"
 # 예전 IPA는 최근 5개까지 남긴다 — SideStore가 예전 목록(apps.json)을 기억하고 있어도
 # 그 주소의 파일이 있어야 설치가 되고, 목록을 새로 받으면 최신 버전으로 업데이트된다
 ls -1t "$NAS_DIR"/KTUBE-*.ipa 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+ls -1t "$NAS_DIR"/KTUBE-android-*.apk 2>/dev/null | tail -n +4 | while read -r old; do rm -f "$old"; done
 echo "배포 완료: $new_ipa → $NAS_DIR"
 ls -la "$NAS_DIR"
