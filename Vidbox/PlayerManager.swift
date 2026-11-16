@@ -158,6 +158,10 @@ final class PlayerManager: ObservableObject {
     private init() {
         // 이전 버전이 저장한 "안 되는 방식" 기록 삭제 (오디오만 재생되는 문제의 원인)
         UserDefaults.standard.removeObject(forKey: "brokenSourceKinds")
+        // 내 미디어(Jellyfin) 영상은 Jellyfin 서버 주소로 재생
+        StreamResolver.externalSources = { id, audio in
+            JellyfinCatalog.isJellyfin(id) ? JellyfinCatalog.shared.sources(for: id, audioOnly: audio) : nil
+        }
         // 주의: false로 두면 HLS가 '재생 중' 상태로 0초에 멈춘다 (CI에서 확인). 기본값(true) 유지.
         player.automaticallyWaitsToMinimizeStalling = true
         configureAudioSession()

@@ -67,10 +67,12 @@ actor StreamResolver {
 
     // MARK: Public
 
+    /// YouTube가 아닌 영상의 재생 주소 (id → 후보, 해당 없으면 nil). 앱 시작 때 등록
+    nonisolated(unsafe) static var externalSources: (@Sendable (String, Bool) -> [PlaybackSource]?)?
+
     func candidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
-        // 내 미디어(Jellyfin) 영상
-        if JellyfinCatalog.isJellyfin(id) {
-            let list = JellyfinCatalog.shared.sources(for: id, audioOnly: audioOnly)
+        // 내 미디어(Jellyfin) 등 YouTube가 아닌 영상: 앱이 등록한 곳에서 재생 주소를 받는다
+        if let list = Self.externalSources?(id, audioOnly) {
             if list.isEmpty { throw AppError.noPlayableStream }
             return list
         }
@@ -88,7 +90,7 @@ actor StreamResolver {
 
     /// 백그라운드로 미리 준비. 동시에 너무 많이 요청하지 않도록 4개로 제한.
     func prefetch(_ ids: [String]) {
-        for id in ids where !JellyfinCatalog.isJellyfin(id) {
+        for id in ids where !id.hasPrefix("jf:") {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
             guard inflight[id] == nil, prefetching < 4 else { continue }
             prefetching += 1

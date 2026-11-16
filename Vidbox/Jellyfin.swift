@@ -178,7 +178,7 @@ final class JellyfinSession: @unchecked Sendable {
                 + "&TranscodingContainer=ts&TranscodingProtocol=hls&AudioCodec=aac"
             return [URL(string: "\(s)/Audio/\(itemID)/universal?\(q)")].compactMap { $0 }
         }
-        var urls: [URL] = []
+        var urls: [URL?] = []
         let c = (container ?? "").lowercased()
         if c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
             urls.append(URL(string: "\(s)/Videos/\(itemID)/stream?static=true&api_key=\(token)&MediaSourceId=\(itemID)"))
