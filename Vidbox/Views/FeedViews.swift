@@ -304,10 +304,11 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             AppLogo()
-            // YouTube처럼 맨 위 검색창
-            SearchBarButton()
+            Spacer()
+            // YouTube처럼 맨 위 오른쪽에 돋보기 아이콘
+            SearchIconButton()
             // 보관함 (계정·시청 기록·저장한 동영상·설정)
             Button { showLibrary = true } label: {
                 if account.isLoggedIn {
@@ -321,8 +322,10 @@ struct HomeView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 4)
-        .padding(.bottom, 2)
+        // YouTube처럼 맨 위 줄을 넉넉하게
+        .frame(minHeight: 48)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 
     private var chipBar: some View {

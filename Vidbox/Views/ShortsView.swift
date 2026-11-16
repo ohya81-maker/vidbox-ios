@@ -324,6 +324,8 @@ struct ShortsView: View {
     /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
     @Environment(\.colorScheme) private var appScheme
     @ObservedObject private var search = SearchRouter.shared
+    /// 쇼츠 위쪽 검색 줄 높이 (영상은 이 아래부터)
+    static let topBar: CGFloat = 44
 
     var body: some View {
         // 바깥: 하단 탭바/홈 인디케이터 높이만 읽는다. 안쪽: 화면 전체를 한 페이지로 써서
@@ -336,7 +338,7 @@ struct ShortsView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(feed.items) { item in
                         ShortPage(item: item, isCurrent: item.id == currentID, shorts: shorts,
-                                  topInset: topInset, bottomInset: bottomInset)
+                                  topInset: topInset + Self.topBar, bottomInset: bottomInset)
                             .frame(width: geo.size.width, height: geo.size.height)
                             .id(item.id)
                             .onAppear {
@@ -372,10 +374,14 @@ struct ShortsView: View {
             .allowsHitTesting(false)
         }
         // YouTube 쇼츠처럼 위쪽 검색창
+        // YouTube 쇼츠처럼 위쪽 줄 오른쪽에 돋보기 (영상은 이 줄 아래부터라 겹치지 않음)
         .overlay(alignment: .top) {
-            SearchBarButton(dark: true)
-                .padding(.horizontal, 16)
-                .padding(.top, 6)
+            HStack {
+                Spacer()
+                SearchIconButton(dark: true)
+            }
+            .frame(height: Self.topBar)
+            .padding(.horizontal, 10)
         }
         .onChange(of: search.isPresented) { _, open in
             if open { shorts.pause() } else if isActive { playCurrent() }

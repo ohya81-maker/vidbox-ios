@@ -258,3 +258,20 @@ struct SearchBarButton: View {
         .buttonStyle(.plain)
     }
 }
+
+/// YouTube처럼 돋보기 아이콘만 (누르면 검색 화면)
+struct SearchIconButton: View {
+    var dark = false
+    var body: some View {
+        Button { SearchRouter.shared.open() } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 21, weight: .regular))
+                .foregroundStyle(dark ? Color.white : Color.primary)
+                .shadow(color: dark ? .black.opacity(0.4) : .clear, radius: 3)
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("검색")
+    }
+}
