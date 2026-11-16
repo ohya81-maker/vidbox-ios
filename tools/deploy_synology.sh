@@ -30,7 +30,9 @@ fi
 rm -rf dist/ktube
 apk_args=()
 [ -f "$APK" ] && apk_args=(--apk "$APK")
-python tools/make_site.py KTUBE.ipa "${apk_args[@]}" --base "$BASE_URL" --out dist/ktube > /dev/null
+notes_args=()
+[ -f site/whatsnew.txt ] && notes_args=(--notes "$(cat site/whatsnew.txt)")
+python tools/make_site.py KTUBE.ipa "${apk_args[@]}" "${notes_args[@]}" --base "$BASE_URL" --out dist/ktube > /dev/null
 
 if [ ! -d "$NAS_DIR" ]; then
   echo "시놀로지 폴더($NAS_DIR)에 접근할 수 없습니다. 탐색기에서 \\\\172.30.1.27\\docker 에 먼저 로그인하세요." >&2

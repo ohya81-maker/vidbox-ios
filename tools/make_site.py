@@ -187,6 +187,7 @@ for key, value in {
     "{{IPA_NAME}}": ipa_name,
     "{{BASE_URL}}": base,
     "{{NOTES}}": notes.replace("<", "&lt;"),
+    "{{MIN_OS}}": min_os,
 }.items():
     page = page.replace(key, value)
 with open(os.path.join(args.out, "index.html"), "w", encoding="utf-8") as f:

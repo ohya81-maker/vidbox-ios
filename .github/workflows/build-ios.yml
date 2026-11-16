@@ -136,7 +136,7 @@ jobs:
           # 시놀로지에 올릴 설치 사이트 (index.html, manifest.plist, apps.json, icon.png, IPA)
           BASE="${SITE_BASE_URL:-https://mistylake.synology.me/youtube}"
           python3 tools/make_site.py KTUBE-signed.ipa --base "$BASE" --out site-out/youtube \
-            --notes "$(git log -1 --pretty=%s)"
+            --notes "$(cat site/whatsnew.txt 2>/dev/null || git log -1 --pretty=%s)"
           (cd site-out/youtube && zip -qry ../../ktube-site.zip .)
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
