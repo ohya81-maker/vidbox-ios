@@ -62,7 +62,6 @@ struct PlayerView: View {
                             // 재생 화면(처음 크기)만큼 비워 두면, 목록 윗부분이 줄어드는 재생 화면 아래에 딱 붙어 따라 올라간다
                             Color.clear.frame(height: tallHeight - 4).id("top")
                             info(item)
-                            actions(item)
                             commentsCard
                             upNext
                         }
@@ -142,20 +141,16 @@ struct PlayerView: View {
                 .font(.headline)
                 .lineLimit(showDescription ? nil : 2)
                 .onTapGesture { showDescription.toggle() }
-            Text([item.views, item.published].compactMap { $0 }.joined(separator: " · "))
+            let channelName = player.watchInfo?.channelName.isEmpty == false ? player.watchInfo!.channelName : item.channel
+            (Text(channelName).foregroundStyle(.primary).fontWeight(.semibold)
+             + Text([player.watchInfo?.subscriberText, item.views, item.published]
+                    .compactMap { $0 }.map { "  " + $0 }.joined()))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
+            // YouTube처럼 한 줄에: 채널 사진 · 구독 ……… 저장 · 다운로드 · 자동재생 · 공유 (아이콘만)
             HStack(spacing: 10) {
                 AvatarView(url: player.watchInfo?.channelAvatar ?? item.channelThumbnail, size: 36)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(player.watchInfo?.channelName.isEmpty == false ? player.watchInfo!.channelName : item.channel)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    if let subs = player.watchInfo?.subscriberText {
-                        Text(subs).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-                Spacer()
                 if player.watchInfo != nil {
                     let on = player.isSubscribedToCurrent
                     Button {
@@ -171,6 +166,8 @@ struct PlayerView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                Spacer(minLength: 16)
+                iconActions(item)
             }
             .padding(.top, 8)
         }
@@ -239,6 +236,47 @@ struct PlayerView: View {
             }
             .padding(.horizontal, 14)
         }
+    }
+
+    private func iconActions(_ item: VideoItem) -> some View {
+        let saved = library.isInAnyFolder(item)
+        return HStack(spacing: 2) {
+            iconButton(saved ? "checkmark.circle.fill" : "plus.circle", label: "저장") { showSave = true }
+            // 다운로드: 영상(소리 포함) 또는 음원만
+            Button { showDownload = true } label: {
+                DownloadIconLabel(id: item.id).frame(width: 38, height: 38).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("다운로드")
+            .confirmationDialog("다운로드", isPresented: $showDownload, titleVisibility: .visible) {
+                downloadButtons(item)
+            } message: {
+                Text("받아 두면 인터넷 없이 재생할 수 있어요. 보관함 → 오프라인 저장에서 볼 수 있습니다.")
+            }
+            iconButton("infinity", label: "자동재생", tint: player.autoplay ? .accentColor : nil) {
+                player.autoplay.toggle()
+            }
+            ShareLink(item: item.shareURL) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 19, weight: .regular))
+                    .frame(width: 38, height: 38)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("공유")
+        }
+    }
+
+    private func iconButton(_ icon: String, label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(tint ?? .primary)
+                .frame(width: 38, height: 38)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     @ViewBuilder
@@ -1013,5 +1051,26 @@ struct CommentRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// 다운로드 아이콘 (받는 중이면 진행 고리)
+struct DownloadIconLabel: View {
+    @ObservedObject private var downloads = DownloadManager.shared
+    let id: String
+
+    var body: some View {
+        if let p = downloads.anyProgress(id) {
+            ZStack {
+                Circle().stroke(Color.secondary.opacity(0.3), lineWidth: 2.5)
+                Circle().trim(from: 0, to: CGFloat(p)).stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 20, height: 20)
+        } else {
+            let done = downloads.file(id, .video) != nil || downloads.file(id, .audio) != nil
+            Image(systemName: done ? "checkmark.circle.fill" : "arrow.down.circle")
+                .font(.system(size: 20, weight: .regular))
+        }
     }
 }
