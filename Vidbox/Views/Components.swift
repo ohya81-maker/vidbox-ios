@@ -218,7 +218,11 @@ struct VideoMenu: View {
                 .rotationEffect(.degrees(90))
                 .foregroundStyle(.primary)
                 .frame(width: 24, height: 28)
+                .contentShape(Rectangle())
         }
+        // iOS 26 기본 메뉴 버튼의 둥근 유리 배경 없이 아이콘만
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
     }
 }

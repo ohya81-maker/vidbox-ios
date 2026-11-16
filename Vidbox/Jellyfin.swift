@@ -182,16 +182,17 @@ final class JellyfinSession: @unchecked Sendable {
         var urls: [URL?] = []
         let c = (choice?.container ?? container ?? "").lowercased()
         let source = choice?.mediaSourceID ?? itemID
-        // 자막을 켜야 하면 원본 파일 직접 재생은 건너뛴다 (자막은 HLS로만 함께 보낼 수 있음)
-        if choice?.subtitleIndex == nil, JFQuality.current == .original, c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
+        // 그림 자막을 입혀야 하면 원본 파일 직접 재생은 건너뛴다 (글자 자막은 앱이 따로 그리므로 상관없음)
+        if choice?.subtitleIsText != false || choice?.subtitleIndex == nil, JFQuality.current == .original, c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
             urls.append(URL(string: "\(s)/Videos/\(itemID)/stream?static=true&ApiKey=\(token)&MediaSourceId=\(source)"))
         }
         var base = "\(s)/Videos/\(itemID)/master.m3u8?ApiKey=\(token)&MediaSourceId=\(source)&DeviceId=\(deviceID)&PlaySessionId=\(session)"
         // Jellyfin 계정 설정(선호 음성·자막 언어, 자막 모드)에 따라 서버가 고른 트랙
         if let a = choice?.audioIndex { base += "&AudioStreamIndex=\(a)" }
-        if let sub = choice?.subtitleIndex {
-            // 글자 자막(srt·ass 등)은 HLS 자막으로, 그림 자막(PGS 등)은 영상에 입혀서
-            base += "&SubtitleStreamIndex=\(sub)&SubtitleMethod=" + ((choice?.subtitleIsText ?? true) ? "Hls" : "Encode")
+        // 글자 자막(srt·ass 등)은 파일로 따로 받아 앱이 재생 시간에 맞춰 그린다 (HLS 자막은 싱크가 어긋났다).
+        // 그림 자막(PGS 등)만 영상에 입혀서 받는다
+        if let sub = choice?.subtitleIndex, choice?.subtitleIsText == false {
+            base += "&SubtitleStreamIndex=\(sub)&SubtitleMethod=Encode"
         }
         let quality = JFQuality.current
         if quality != .original {
@@ -199,7 +200,7 @@ final class JellyfinSession: @unchecked Sendable {
                         + "&MaxStreamingBitrate=\(quality.rawValue)&VideoBitrate=\(quality.rawValue - 192_000)"
                         + "&TranscodingMaxAudioChannels=2&AllowVideoStreamCopy=false")].compactMap { $0 }
         }
-        if choice?.subtitleIsText == false {
+        if choice?.subtitleIndex != nil, choice?.subtitleIsText == false {
             return [URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
                         + "&MaxStreamingBitrate=10000000&TranscodingMaxAudioChannels=2&AllowVideoStreamCopy=false")].compactMap { $0 }
         }
@@ -444,6 +445,16 @@ final class JellyfinCatalog: @unchecked Sendable {
         return c.subtitleTracks.first { $0.index == idx }
     }
 
+    /// 앱이 직접 그릴 글자 자막 파일 주소 (WebVTT로 변환해서 받는다)
+    func subtitleFileURL(_ id: String) -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        let raw = String(id.dropFirst(3))
+        guard let c = choices[raw] ?? nil, let idx = c.subtitleIndex, c.subtitleIsText,
+              let token = JellyfinSession.shared.token else { return nil }
+        let source = c.mediaSourceID ?? raw
+        return URL(string: "\(JellyfinSession.shared.server)/Videos/\(raw)/\(source)/Subtitles/\(idx)/0/Stream.vtt?ApiKey=\(token)")
+    }
+
     /// 같은 종류(글자 자막) 안에서 몇 번째인지 — 언어로 못 찾을 때 순서로 고른다
     func textSubtitlePosition(_ id: String) -> Int? {
         lock.lock(); defer { lock.unlock() }
@@ -498,5 +509,66 @@ enum JFQuality: Int, CaseIterable, Identifiable {
     static var current: JFQuality {
         get { JFQuality(rawValue: UserDefaults.standard.integer(forKey: "jf.maxBitrate")) ?? .original }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "jf.maxBitrate") }
+    }
+}
+
+// MARK: - 앱이 직접 그리는 자막
+
+struct SubtitleCue: Sendable {
+    let start: Double
+    let end: Double
+    let text: String
+}
+
+enum SubtitleParser {
+    /// WebVTT/SRT → 자막 목록 (시작 시간 순)
+    static func parse(_ raw: String) -> [SubtitleCue] {
+        var cues: [SubtitleCue] = []
+        let blocks = raw.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n")
+        for block in blocks {
+            let lines = block.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+            guard let timeIndex = lines.firstIndex(where: { $0.contains("-->") }) else { continue }
+            let parts = lines[timeIndex].components(separatedBy: "-->")
+            guard parts.count == 2, let a = time(parts[0]), let b = time(parts[1].split(separator: " ").first.map(String.init) ?? "")
+            else { continue }
+            let text = lines[(timeIndex + 1)...].joined(separator: "\n")
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&nbsp;", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { cues.append(SubtitleCue(start: a, end: b, text: text)) }
+        }
+        return cues.sorted { $0.start < $1.start }
+    }
+
+    /// "01:02:03.456" · "02:03.456" · "00:01:02,345" → 초
+    private static func time(_ s: String) -> Double? {
+        let t = s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        let comps = t.split(separator: ":").map(String.init)
+        guard !comps.isEmpty, let last = Double(comps.last!) else { return nil }
+        var total = last
+        if comps.count >= 2, let m = Double(comps[comps.count - 2]) { total += m * 60 }
+        if comps.count >= 3, let h = Double(comps[comps.count - 3]) { total += h * 3600 }
+        return total
+    }
+}
+
+/// 지금 보여 줄 자막 한 줄 (자주 바뀌므로 재생 화면 전체와 따로)
+@MainActor
+final class SubtitleClock: ObservableObject {
+    @Published var text: String?
+    var cues: [SubtitleCue] = []
+    private var index = 0
+
+    func reset(_ new: [SubtitleCue]) { cues = new; index = 0; text = nil }
+
+    func update(_ t: Double) {
+        guard !cues.isEmpty else { if text != nil { text = nil }; return }
+        // 앞으로 진행하면 이어서, 뒤로 가면 처음부터 찾는다
+        if index >= cues.count || cues[index].start > t { index = 0 }
+        while index + 1 < cues.count, cues[index + 1].start <= t { index += 1 }
+        let cue = cues[index]
+        let now = (cue.start <= t && t < cue.end) ? cue.text : nil
+        if now != text { text = now }
     }
 }

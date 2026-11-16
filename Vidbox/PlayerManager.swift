@@ -27,6 +27,9 @@ final class PlayerManager: ObservableObject {
     /// 재생 위치는 0.5초마다 바뀌므로 따로 둔다 — 여기(PlayerManager)에 두면 이것을 지켜보는
     /// 모든 화면(탭 전체, 영상 카드들)이 0.5초마다 다시 그려져 스크롤·버튼이 버벅인다
     let clock = PlaybackClock()
+    /// 내 미디어(Jellyfin) 글자 자막 (앱이 직접 그림)
+    let subtitles = SubtitleClock()
+    private var subtitleObserver: Any?
     private(set) var currentTime: Double {
         get { clock.time }
         set { clock.time = newValue }
@@ -198,6 +201,7 @@ final class PlayerManager: ObservableObject {
         }
 
         loadTask?.cancel()
+        stopSubtitles()
         current = item
         if audioOnly { MusicTaste.record(item) }
         if newQueue != nil || !continuingQueue { rebuildOrder() }
@@ -316,35 +320,44 @@ final class PlayerManager: ObservableObject {
         }
     }
 
-    /// Jellyfin 자막: 고른 언어의 트랙을 켜고(끄기면 모두 끔), 글자를 크게
+    /// Jellyfin 자막: 글자 자막은 파일(VTT)로 받아 재생 시간에 맞춰 직접 그린다 (HLS 자막은 싱크가 어긋남)
     private func applySubtitles(_ item: AVPlayerItem, videoID: String) {
-        // 자막 글자 크기 (기본 100%)
-        if let rule = AVTextStyleRule(textMarkupAttributes: [kCMTextMarkupAttribute_RelativeFontSize as String: 135]) {
-            item.textStyleRules = [rule]
-        }
-        let wanted = JellyfinCatalog.shared.wantedSubtitle(videoID)
-        let position = JellyfinCatalog.shared.textSubtitlePosition(videoID)
+        // 영상 안에 끼워진 자막은 끈다 (겹치지 않게)
         Task { @MainActor in
-            guard let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) else { return }
-            guard let wanted else {
-                item.select(nil, in: group)
-                return
-            }
-            let options = group.options.filter { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) }
-            let code = Self.twoLetter(wanted.language)
-            let byLanguage = options.first { opt in
-                let tag = (opt.extendedLanguageTag ?? opt.locale?.identifier ?? "").lowercased()
-                return code != nil && tag.hasPrefix(code!)
-            }
-            let byName = options.first { opt in
-                let name = opt.displayName.lowercased()
-                return name == wanted.title.lowercased() || (wanted.language.map { name.contains($0.lowercased()) } ?? false)
-            }
-            let byPosition = position.flatMap { $0 < options.count ? options[$0] : nil }
-            if let option = byLanguage ?? byName ?? byPosition ?? options.first {
-                item.select(option, in: group)
+            if let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) { item.select(nil, in: group) }
+        }
+        subtitles.reset([])
+        guard let url = JellyfinCatalog.shared.subtitleFileURL(videoID) else { return }
+        Task { [weak self] in
+            var request = URLRequest(url: url)
+            request.setValue(JellyfinSession.shared.authHeader, forHTTPHeaderField: "Authorization")
+            guard let (data, _) = try? await URLSession.shared.data(for: request),
+                  let text = String(data: data, encoding: .utf8) else { return }
+            let cues = SubtitleParser.parse(text)
+            guard let self, self.current?.id == videoID else { return }
+            self.subtitles.reset(cues)
+            self.startSubtitleTimer()
+        }
+    }
+
+    /// 자막이 있을 때만 0.1초마다 화면 자막을 맞춘다
+    private func startSubtitleTimer() {
+        if let subtitleObserver { player.removeTimeObserver(subtitleObserver) }
+        subtitleObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main
+        ) { [weak self] time in
+            let t = time.seconds
+            MainActor.assumeIsolated {
+                guard let self, t.isFinite else { return }
+                self.subtitles.update(t)
             }
         }
+    }
+
+    private func stopSubtitles() {
+        if let subtitleObserver { player.removeTimeObserver(subtitleObserver) }
+        subtitleObserver = nil
+        subtitles.reset([])
     }
 
     /// Jellyfin 언어 코드(kor·eng·jpn …) → 두 글자 코드(ko·en·ja …)
@@ -470,6 +483,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func stop() {
+        stopSubtitles()
         if let prev = current, JellyfinCatalog.isJellyfin(prev.id) {
             JellyfinAPI.report("stop", itemID: String(prev.id.dropFirst(3)), seconds: currentTime)
         }

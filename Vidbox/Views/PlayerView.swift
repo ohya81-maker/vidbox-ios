@@ -472,6 +472,10 @@ struct PlayerStage: View {
                 .allowsHitTesting(false)
             }
 
+            // 내 미디어 글자 자막 (재생 시간에 맞춰 앱이 직접 그림)
+            SubtitleOverlay(subtitles: player.subtitles, fullscreen: fullscreen)
+                .allowsHitTesting(false)
+
             tapZones
 
             if seekAmount > 0 { seekFeedback }
@@ -1290,5 +1294,29 @@ struct JellyfinPlaybackSettings: View {
         JellyfinCatalog.shared.setOverride(videoID, audio: audio, subtitle: subtitle)
         PlayerManager.shared.reloadKeepingPosition()
         dismiss()
+    }
+}
+
+/// 자막 한 줄을 영상 아래쪽에 크게 (흰 글자 + 그림자 + 옅은 배경)
+struct SubtitleOverlay: View {
+    @ObservedObject var subtitles: SubtitleClock
+    let fullscreen: Bool
+
+    var body: some View {
+        VStack {
+            Spacer()
+            if let text = subtitles.text {
+                Text(text)
+                    .font(.system(size: fullscreen ? 24 : 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .black, radius: 2, x: 0, y: 1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, fullscreen ? 36 : 14)
+            }
+        }
     }
 }
