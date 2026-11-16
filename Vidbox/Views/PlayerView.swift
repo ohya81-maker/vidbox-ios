@@ -50,7 +50,7 @@ struct PlayerView: View {
         let aspect = player.audioOnly ? 16 / 9 : min(16 / 9, max(player.videoAspect, 0.65))
         let tallHeight = width / aspect
         let compactHeight = min(tallHeight, width * 9 / 16)
-        let stageHeight = max(compactHeight, tallHeight - max(0, scrollY))
+        let stageHeight = showComments ? compactHeight : max(compactHeight, tallHeight - max(0, scrollY))
         return ZStack(alignment: .top) {
             if let item = player.current {
                 ScrollViewReader { proxy in
@@ -93,6 +93,22 @@ struct PlayerView: View {
                             withAnimation(.spring) { dragOffset = 0 }
                         }
                 )
+
+            // 댓글: YouTube처럼 영상은 위에서 계속 재생되고, 그 아래를 댓글 창이 채운다
+            if showComments, let page = player.commentsPreview {
+                VStack(spacing: 0) {
+                    // 영상 자리는 비워 둔다 (터치는 그대로 영상으로)
+                    Color.clear.frame(height: compactHeight).allowsHitTesting(false)
+                    CommentsPanel(first: page) {
+                        withAnimation(.easeInOut(duration: 0.25)) { showComments = false }
+                    }
+                    .id(player.current?.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+                }
+                .transition(.move(edge: .bottom))
+                .zIndex(1.5)
+            }
 
             // 위로 올린 목록이 상단 시계(상태 표시줄) 영역으로 비쳐 보이지 않게 덮는다
             Color.clear
@@ -147,7 +163,7 @@ struct PlayerView: View {
     @ViewBuilder
     private var commentsCard: some View {
         if let page = player.commentsPreview, let first = page.comments.first {
-            Button { showComments = true } label: {
+            Button { withAnimation(.easeInOut(duration: 0.25)) { showComments = true } } label: {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Text("댓글").font(.subheadline.weight(.semibold))
@@ -172,11 +188,6 @@ struct PlayerView: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 14)
-            .sheet(isPresented: $showComments) {
-                CommentsSheet(first: page)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
         }
     }
 
@@ -273,7 +284,10 @@ struct PlayerView: View {
                 }
             }
         }
-        .onChange(of: player.current?.id) { _, _ in relatedFilter = 0 }
+        .onChange(of: player.current?.id) { _, _ in
+            relatedFilter = 0
+            showComments = false
+        }
     }
 
     /// YouTube처럼 다음 영상 위의 필터: 모두 / 이 채널 / 관련 콘텐츠(다른 채널)
@@ -791,16 +805,43 @@ struct SubscribeLabelStyle: LabelStyle {
     }
 }
 
-// MARK: - 댓글 전체 보기
+// MARK: - 댓글 창 (영상 아래)
 
-struct CommentsSheet: View {
+struct CommentsPanel: View {
     let first: CommentPage
+    var onClose: () -> Void
+    @EnvironmentObject private var account: AccountStore
     @State private var comments: [Comment] = []
     @State private var next: String?
     @State private var loading = false
+    @State private var draft = ""
+    @State private var sending = false
+    @State private var sendError: String?
+    @State private var showLogin = false
+    @FocusState private var typing: Bool
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            HStack {
+                Text("댓글").font(.headline)
+                if let count = first.countText?.replacingOccurrences(of: "댓글", with: "")
+                    .replacingOccurrences(of: "개", with: "").trimmingCharacters(in: .whitespaces) {
+                    Text(count).font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .padding(.vertical, 6)
+            Divider()
+
             List {
                 ForEach(comments) { c in
                     CommentRow(comment: c)
@@ -812,14 +853,79 @@ struct CommentsSheet: View {
                 }
             }
             .listStyle(.plain)
-            .navigationTitle(first.countText ?? "댓글")
-            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+
+            Divider()
+            composer
         }
         .onAppear {
             if comments.isEmpty {
                 comments = first.comments
                 next = first.next
             }
+        }
+        .sheet(isPresented: $showLogin) { LoginView() }
+    }
+
+    @ViewBuilder
+    private var composer: some View {
+        if account.isLoggedIn {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
+                    AvatarView(url: account.avatar, size: 30)
+                    TextField("댓글 추가...", text: $draft, axis: .vertical)
+                        .lineLimit(1...4)
+                        .focused($typing)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 18))
+                    if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button { Task { await send() } } label: {
+                            if sending { ProgressView() } else {
+                                Image(systemName: "paperplane.fill").font(.system(size: 18))
+                            }
+                        }
+                        .disabled(sending || first.createParams == nil)
+                    }
+                }
+                if let sendError {
+                    Text(sendError).font(.caption).foregroundStyle(.red)
+                } else if first.createParams == nil {
+                    Text("이 영상은 댓글을 쓸 수 없어요.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        } else {
+            Button { showLogin = true } label: {
+                HStack {
+                    Image(systemName: "person.crop.circle")
+                    Text("댓글을 쓰려면 YouTube 계정으로 로그인하세요")
+                    Spacer()
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func send() async {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let params = first.createParams else { return }
+        sending = true
+        sendError = nil
+        defer { sending = false }
+        do {
+            try await InnerTubeClient.shared.postComment(text, params: params)
+            comments.insert(Comment(id: UUID().uuidString, author: account.handle ?? account.name ?? "나",
+                                    avatar: account.avatar, text: text, published: "방금 전"), at: 0)
+            draft = ""
+            typing = false
+        } catch {
+            sendError = "댓글을 올리지 못했어요. 잠시 후 다시 시도해 주세요."
         }
     }
 

@@ -27,6 +27,8 @@ struct CommentPage {
     var comments: [Comment]
     var next: String?
     var countText: String?
+    /// 로그인했을 때만 오는 댓글 작성 정보
+    var createParams: String? = nil
 }
 
 struct SubscribedChannel: Codable, Identifiable, Hashable {
@@ -172,13 +174,27 @@ extension InnerTubeClient {
             }
         }
         if ordered.isEmpty { ordered = Array(entities.values) }
-        return CommentPage(comments: ordered, next: next, countText: countText)
+        var createParams: String?
+        Self.walkJSON(root) { k, v in
+            if createParams == nil, k == "createCommentParams", let p = v as? String { createParams = p }
+        }
+        return CommentPage(comments: ordered, next: next, countText: countText, createParams: createParams)
     }
 
     /// 채널의 「동영상」 탭 (최신순)
     func channelVideos(_ channelID: String) async throws -> [VideoItem] {
         let json = try await postPublic("browse", body: ["browseId": channelID, "params": "EgZ2aWRlb3PyBgQKAjoA"])
         return Self.parsePage(json).items
+    }
+
+    /// 로그인한 YouTube 계정으로 댓글 쓰기
+    func postComment(_ text: String, params: String) async throws {
+        let json = try await postPublic("comment/create_comment", body: ["commentText": text, "createCommentParams": params])
+        var failed = false
+        Self.walkJSON(json) { k, v in
+            if k == "status", let s = v as? String, s.contains("FAIL") { failed = true }
+        }
+        if failed { throw AppError.badResponse(0) }
     }
 
     /// 로그인한 YouTube 계정으로 구독/구독 취소
