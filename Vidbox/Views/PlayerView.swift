@@ -11,6 +11,8 @@ struct PlayerView: View {
     @State private var showSave = false
     @State private var showDownload = false
     @State private var relatedFilter = 0
+    /// 아래 목록을 위로 올린 만큼 (세로 영상은 이만큼 재생 화면이 줄어든다)
+    @State private var scrollY: CGFloat = 0
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -25,7 +27,7 @@ struct PlayerView: View {
                 } else if player.isQueueMode && (player.audioOnly || player.musicVideoMode) {
                     MusicPlayerView()
                 } else {
-                    portrait
+                    portrait(width: geo.size.width)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -41,11 +43,41 @@ struct PlayerView: View {
         }
     }
 
-    private var portrait: some View {
-        VStack(spacing: 0) {
-            PlayerStage(fullscreen: false)
-                // 아래 목록과 높이를 반씩 나누지 않고, 영상 비율만큼의 높이를 먼저 차지한다
-                .layoutPriority(1)
+    /// 세로 영상(쇼츠형)은 처음엔 화면을 크게 채우고, 아래 목록을 위로 쓸어 올리면
+    /// YouTube처럼 재생 화면이 16:9 크기까지 줄어들며 목록이 따라 올라온다.
+    private func portrait(width: CGFloat) -> some View {
+        let aspect = player.audioOnly ? 16 / 9 : min(16 / 9, max(player.videoAspect, 0.65))
+        let tallHeight = width / aspect
+        let compactHeight = min(tallHeight, width * 9 / 16)
+        let stageHeight = max(compactHeight, tallHeight - max(0, scrollY))
+        return ZStack(alignment: .top) {
+            if let item = player.current {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            // 재생 화면(처음 크기)만큼 비워 두면, 목록 윗부분이 줄어드는 재생 화면 아래에 딱 붙어 따라 올라간다
+                            Color.clear.frame(height: tallHeight - 4).id("top")
+                            info(item)
+                            actions(item)
+                            upNext
+                        }
+                        .padding(.bottom, 12)
+                    }
+                    .onScrollGeometryChange(for: CGFloat.self) { geo in
+                        geo.contentOffset.y + geo.contentInsets.top
+                    } action: { _, y in
+                        scrollY = y
+                    }
+                    .onChange(of: item.id) { _, _ in
+                        proxy.scrollTo("top", anchor: .top)
+                    }
+                }
+            } else {
+                Spacer()
+            }
+
+            PlayerStage(fullscreen: false, height: stageHeight, expanded: stageHeight >= tallHeight - 1)
+                .animation(.easeInOut(duration: 0.25), value: tallHeight)
                 .zIndex(1)
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 20, coordinateSpace: .global)
@@ -59,19 +91,6 @@ struct PlayerView: View {
                             withAnimation(.spring) { dragOffset = 0 }
                         }
                 )
-
-            if let item = player.current {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        info(item)
-                        actions(item)
-                        upNext
-                    }
-                    .padding(.vertical, 12)
-                }
-            } else {
-                Spacer()
-            }
         }
     }
 
@@ -222,6 +241,10 @@ struct PlayerView: View {
 
 struct PlayerStage: View {
     let fullscreen: Bool
+    /// 세로 화면에서 정해 준 높이 (nil이면 영상 비율대로)
+    var height: CGFloat? = nil
+    /// 처음 크기(가장 큰 상태)인지 — 줄어드는 중에는 영상이 잘리지 않게 전부 보여 준다
+    var expanded = true
     @EnvironmentObject private var player: PlayerManager
     @ObservedObject private var clock = PlayerManager.shared.clock
     @State private var showControls = true
@@ -241,7 +264,7 @@ struct PlayerStage: View {
 
     /// 세로 영상은 YouTube처럼 가로를 꽉 채우고 위아래를 살짝 잘라낸다 (전체화면에선 전부 보이게)
     private var fillsStage: Bool {
-        !fullscreen && !player.audioOnly && player.videoAspect < 0.9
+        !fullscreen && !player.audioOnly && player.videoAspect < 0.9 && expanded
     }
 
     var body: some View {
@@ -278,7 +301,7 @@ struct PlayerStage: View {
             }
 
         }
-        .stageFrame(fullscreen, aspect: stageAspect)
+        .stageFrame(fullscreen, aspect: stageAspect, height: height)
         .clipped()
         .environment(\.colorScheme, .dark)
         .onAppear { scheduleHide() }
@@ -482,9 +505,11 @@ struct PlayerStage: View {
 
 private extension View {
     @ViewBuilder
-    func stageFrame(_ fullscreen: Bool, aspect: CGFloat) -> some View {
+    func stageFrame(_ fullscreen: Bool, aspect: CGFloat, height: CGFloat? = nil) -> some View {
         if fullscreen {
             self.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let height {
+            self.frame(maxWidth: .infinity).frame(height: height)
         } else {
             self.aspectRatio(aspect, contentMode: .fit)
                 .animation(.easeInOut(duration: 0.25), value: aspect)
