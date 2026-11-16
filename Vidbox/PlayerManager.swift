@@ -378,8 +378,7 @@ final class PlayerManager: ObservableObject {
             if track.isAuto {
                 // 자동 자막은 줄이 굴러 올라가며 겹쳐 나온다 → 아주 짧은 칸은 빼고 마지막 줄만
                 cues = cues.filter { $0.end - $0.start > 0.05 }.map {
-                    SubtitleCue(start: $0.start, end: $0.end, text: $0.text.components(separatedBy: "
-").last ?? $0.text)
+                    SubtitleCue(start: $0.start, end: $0.end, text: $0.text.components(separatedBy: "\n").last ?? $0.text)
                 }
             }
             guard let self, self.current?.id == id, self.captionsOn else { return }
