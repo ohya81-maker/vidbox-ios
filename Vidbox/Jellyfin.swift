@@ -29,6 +29,7 @@ struct JFItem: Identifiable, Hashable, Decodable {
     let BackdropImageTags: [String]?
     let ParentBackdropItemId: String?
     let SeriesId: String?
+    let SeasonId: String?
     let AlbumId: String?
     let UserData: UserDataInfo?
 
@@ -168,7 +169,7 @@ final class JellyfinSession: @unchecked Sendable {
     }
 
     /// 재생 후보 (앞에서부터 시도): 원본 그대로 → HLS(가능하면 원본 복사) → HLS(H.264로 변환)
-    func playbackURLs(itemID: String, audio: Bool, container: String?) -> [URL] {
+    func playbackURLs(itemID: String, audio: Bool, container: String?, choice: JFPlaybackChoice? = nil) -> [URL] {
         guard let token, let userID else { return [] }
         let s = server
         let session = UUID().uuidString
@@ -179,11 +180,23 @@ final class JellyfinSession: @unchecked Sendable {
             return [URL(string: "\(s)/Audio/\(itemID)/universal?\(q)")].compactMap { $0 }
         }
         var urls: [URL?] = []
-        let c = (container ?? "").lowercased()
-        if c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
-            urls.append(URL(string: "\(s)/Videos/\(itemID)/stream?static=true&api_key=\(token)&MediaSourceId=\(itemID)"))
+        let c = (choice?.container ?? container ?? "").lowercased()
+        let source = choice?.mediaSourceID ?? itemID
+        // 자막을 켜야 하면 원본 파일 직접 재생은 건너뛴다 (자막은 HLS로만 함께 보낼 수 있음)
+        if choice?.subtitleIndex == nil, c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
+            urls.append(URL(string: "\(s)/Videos/\(itemID)/stream?static=true&api_key=\(token)&MediaSourceId=\(source)"))
         }
-        let base = "\(s)/Videos/\(itemID)/master.m3u8?api_key=\(token)&MediaSourceId=\(itemID)&DeviceId=\(deviceID)&PlaySessionId=\(session)"
+        var base = "\(s)/Videos/\(itemID)/master.m3u8?api_key=\(token)&MediaSourceId=\(source)&DeviceId=\(deviceID)&PlaySessionId=\(session)"
+        // Jellyfin 계정 설정(선호 음성·자막 언어, 자막 모드)에 따라 서버가 고른 트랙
+        if let a = choice?.audioIndex { base += "&AudioStreamIndex=\(a)" }
+        if let sub = choice?.subtitleIndex {
+            // 글자 자막(srt·ass 등)은 HLS 자막으로, 그림 자막(PGS 등)은 영상에 입혀서
+            base += "&SubtitleStreamIndex=\(sub)&SubtitleMethod=" + ((choice?.subtitleIsText ?? true) ? "Hls" : "Encode")
+        }
+        if choice?.subtitleIsText == false {
+            return [URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
+                        + "&MaxStreamingBitrate=10000000&TranscodingMaxAudioChannels=2&AllowVideoStreamCopy=false")].compactMap { $0 }
+        }
         urls.append(URL(string: base + "&VideoCodec=h264,hevc&AudioCodec=aac,mp3,ac3,eac3&SegmentContainer=mp4"
                         + "&MaxStreamingBitrate=60000000&TranscodingMaxAudioChannels=2&EnableAutoStreamCopy=true"
                         + "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true&BreakOnNonKeyFrames=true"))
@@ -212,7 +225,7 @@ enum JellyfinError: LocalizedError {
 enum JellyfinAPI {
     static let fields = "Overview,PrimaryImageAspectRatio,Container,ParentId"
 
-    private static func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
+    static func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
                                 server: String? = nil) async throws -> Data {
         let s = JellyfinSession.shared
         guard let url = URL(string: (server ?? s.server) + path) else { throw JellyfinError.server(0) }
@@ -240,7 +253,7 @@ enum JellyfinAPI {
         JellyfinSession.shared.save(server: s, token: auth.AccessToken, userID: auth.User.Id, userName: auth.User.Name ?? user)
     }
 
-    private static func items(_ path: String) async throws -> [JFItem] {
+    static func items(_ path: String) async throws -> [JFItem] {
         let data = try await request(path)
         if let list = try? JSONDecoder().decode(JFItemsResponse.self, from: data) { return list.Items }
         return try JSONDecoder().decode([JFItem].self, from: data)
@@ -279,6 +292,39 @@ enum JellyfinAPI {
                                + "&sortOrder=Ascending&fields=\(fields)&startIndex=\(start)&limit=\(limit)")
     }
 
+    /// 서버가 이 사용자 설정(자막 모드·선호 언어)으로 고른 기본 음성·자막 트랙
+    static func playbackChoice(itemID: String) async -> JFPlaybackChoice? {
+        guard let u = JellyfinSession.shared.userID,
+              let data = try? await request("/Items/\(itemID)/PlaybackInfo?userId=\(u)", method: "POST", body: ["UserId": u]),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let source = (json["MediaSources"] as? [[String: Any]])?.first
+        else { return nil }
+        let streams = source["MediaStreams"] as? [[String: Any]] ?? []
+        let subIndex = source["DefaultSubtitleStreamIndex"] as? Int
+        let sub = streams.first { ($0["Index"] as? Int) == subIndex && ($0["Type"] as? String) == "Subtitle" }
+        return JFPlaybackChoice(
+            mediaSourceID: source["Id"] as? String,
+            container: source["Container"] as? String,
+            audioIndex: source["DefaultAudioStreamIndex"] as? Int,
+            subtitleIndex: (subIndex ?? -1) >= 0 && sub != nil ? subIndex : nil,
+            subtitleIsText: sub?["IsTextSubtitleStream"] as? Bool ?? true
+        )
+    }
+
+    /// 다음에 볼 것: 에피소드면 같은 시리즈의 다음 화들, 아니면 비슷한 작품
+    static func upNext(after itemID: String) async -> [JFItem] {
+        guard let u = JellyfinSession.shared.userID,
+              let data = try? await request("/Items/\(itemID)?userId=\(u)"),
+              let item = try? JSONDecoder().decode(JFItem.self, from: data)
+        else { return [] }
+        if item.Type == "Episode", let series = item.SeriesId,
+           let all = try? await items("/Shows/\(series)/Episodes?userId=\(u)&fields=\(fields)") {
+            if let i = all.firstIndex(where: { $0.Id == itemID }) { return Array(all.dropFirst(i + 1).prefix(30)) }
+            return all
+        }
+        return (try? await items("/Items/\(itemID)/Similar?userId=\(u)&limit=16&fields=\(fields)")) ?? []
+    }
+
     // MARK: 시청 위치 알리기 (웹·TV에서 이어 보기)
 
     static func report(_ event: String, itemID: String, seconds: Double, paused: Bool = false) {
@@ -300,7 +346,7 @@ extension JFItem {
         var item = VideoItem(
             id: "jf:" + Id,
             title: title,
-            channel: subtitle.isEmpty ? "내 미디어" : subtitle,
+            channel: SeriesName ?? AlbumArtist ?? "내 미디어",
             channelThumbnail: nil,
             thumbnail: s.imageURL(self, backdrop: !isAudio, width: 960) ?? s.imageURL(self, width: 960),
             duration: durationText,
@@ -331,11 +377,28 @@ final class JellyfinCatalog: @unchecked Sendable {
 
     static func isJellyfin(_ id: String) -> Bool { id.hasPrefix("jf:") }
 
-    func sources(for id: String, audioOnly: Bool) -> [PlaybackSource] {
+    func sources(for id: String, audioOnly: Bool) async -> [PlaybackSource] {
         let raw = String(id.dropFirst(3))
         let info = item(raw)
         let audio = info?.isAudio ?? audioOnly
-        return JellyfinSession.shared.playbackURLs(itemID: raw, audio: audio, container: info?.Container)
+        let choice = audio ? nil : await JellyfinAPI.playbackChoice(itemID: raw)
+        lock.lock(); choices[raw] = choice; lock.unlock()
+        return JellyfinSession.shared.playbackURLs(itemID: raw, audio: audio, container: info?.Container, choice: choice)
             .map { PlaybackSource.single($0) }
     }
+
+    private var choices: [String: JFPlaybackChoice?] = [:]
+    /// 이 영상에 자막을 켜기로 했는지 (재생기가 자막 트랙을 골라 켤 때 사용)
+    func wantsSubtitles(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return (choices[String(id.dropFirst(3))] ?? nil)?.subtitleIndex != nil
+    }
+}
+
+struct JFPlaybackChoice: Sendable {
+    var mediaSourceID: String?
+    var container: String?
+    var audioIndex: Int?
+    var subtitleIndex: Int?
+    var subtitleIsText: Bool
 }

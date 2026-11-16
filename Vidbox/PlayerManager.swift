@@ -160,7 +160,7 @@ final class PlayerManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "brokenSourceKinds")
         // 내 미디어(Jellyfin) 영상은 Jellyfin 서버 주소로 재생
         StreamResolver.externalSources = { id, audio in
-            JellyfinCatalog.isJellyfin(id) ? JellyfinCatalog.shared.sources(for: id, audioOnly: audio) : nil
+            JellyfinCatalog.isJellyfin(id) ? await JellyfinCatalog.shared.sources(for: id, audioOnly: audio) : nil
         }
         // 주의: false로 두면 HLS가 '재생 중' 상태로 0초에 멈춘다 (CI에서 확인). 기본값(true) 유지.
         player.automaticallyWaitsToMinimizeStalling = true
@@ -217,6 +217,14 @@ final class PlayerManager: ObservableObject {
             related = upNextList ?? []
             relatedToken = nil
             relatedLoading = false
+            if (upNextList ?? []).isEmpty {
+                let raw = String(item.id.dropFirst(3))
+                Task { [weak self] in
+                    let next = await JellyfinAPI.upNext(after: raw)
+                    guard let self, self.current?.id == item.id else { return }
+                    self.related = next.map(\.videoItem)
+                }
+            }
             watchInfo = nil
             commentsPreview = nil
             lastJellyfinReport = Date()
@@ -300,6 +308,15 @@ final class PlayerManager: ObservableObject {
             watchInfo = info
         } else {
             objectWillChange.send()
+        }
+    }
+
+    /// Jellyfin이 함께 보낸 자막 트랙을 켠다 (계정 설정에서 자막을 쓰기로 한 경우)
+    private func enableSubtitles(_ item: AVPlayerItem) {
+        Task { @MainActor in
+            guard let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) else { return }
+            let options = group.options.filter { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) }
+            if let option = options.first ?? group.options.first { item.select(option, in: group) }
         }
     }
 
@@ -594,6 +611,10 @@ final class PlayerManager: ObservableObject {
                 switch status {
                 case .readyToPlay:
                     self.isLoading = false
+                    if let id = self.current?.id, JellyfinCatalog.isJellyfin(id),
+                       JellyfinCatalog.shared.wantsSubtitles(id) {
+                        self.enableSubtitles(observed)
+                    }
                     self.duration = seconds.isFinite ? seconds : 0
                     self.updateNowPlaying()
                     // 재생기가 길이를 실제보다 길게(예: 2배) 계산하면 YouTube가 알려준 길이로 바로잡는다

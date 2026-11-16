@@ -153,11 +153,13 @@ struct PlayerView: View {
                 .onTapGesture { if player.watchInfo != nil { showChannel = true } }
             // YouTube처럼 한 줄에: 채널 사진 · 구독 ……… 저장 · 다운로드 · 자동재생 · 공유 (아이콘만)
             HStack(spacing: 10) {
-                // 채널 사진을 누르면 채널 화면
-                Button { if player.watchInfo != nil { showChannel = true } } label: {
-                    AvatarView(url: player.watchInfo?.channelAvatar ?? item.channelThumbnail, size: 36)
+                // 채널 사진을 누르면 채널 화면 (내 미디어 영상은 채널이 없어 숨김)
+                if !JellyfinCatalog.isJellyfin(item.id) {
+                    Button { if player.watchInfo != nil { showChannel = true } } label: {
+                        AvatarView(url: player.watchInfo?.channelAvatar ?? item.channelThumbnail, size: 36)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
                 if player.watchInfo != nil {
                     let on = player.isSubscribedToCurrent
                     Button {
@@ -328,15 +330,16 @@ struct PlayerView: View {
 
     private var upNext: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if player.isQueueMode {
-                Text("재생목록")
+            let isJF = JellyfinCatalog.isJellyfin(player.current?.id ?? "")
+            if player.isQueueMode || isJF {
+                Text(player.isQueueMode ? "재생목록" : "다음에 볼 것")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 14)
             } else {
                 relatedChips
             }
             let list = player.isQueueMode ? player.queue : filteredRelated
-            if list.isEmpty {
+            if list.isEmpty && !isJF {
                 ProgressView().frame(maxWidth: .infinity).padding()
             }
             if player.isQueueMode {

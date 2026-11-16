@@ -68,11 +68,11 @@ actor StreamResolver {
     // MARK: Public
 
     /// YouTube가 아닌 영상의 재생 주소 (id → 후보, 해당 없으면 nil). 앱 시작 때 등록
-    nonisolated(unsafe) static var externalSources: (@Sendable (String, Bool) -> [PlaybackSource]?)?
+    nonisolated(unsafe) static var externalSources: (@Sendable (String, Bool) async -> [PlaybackSource]?)?
 
     func candidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
         // 내 미디어(Jellyfin) 등 YouTube가 아닌 영상: 앱이 등록한 곳에서 재생 주소를 받는다
-        if let list = Self.externalSources?(id, audioOnly) {
+        if let list = await Self.externalSources?(id, audioOnly) {
             if list.isEmpty { throw AppError.noPlayableStream }
             return list
         }
