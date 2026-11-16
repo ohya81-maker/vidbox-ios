@@ -322,7 +322,7 @@ struct FolderDetailView: View {
             Button("저장") { if case .playlist(let id) = ref { library.rename(id, to: newName) } }
             Button("취소", role: .cancel) {}
         }
-        .confirmationDialog("'\(name)' 폴더를 삭제할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .alert("'\(name)' 폴더를 삭제할까요?", isPresented: $confirmDelete) {
             Button("삭제", role: .destructive) {
                 if case .playlist(let id) = ref { library.deletePlaylist(id) }
                 dismiss()

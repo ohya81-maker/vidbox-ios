@@ -5,7 +5,8 @@ import UIKit
 //
 // 홈의 NavigationStack 경로(path)에 값으로 쌓는다 → 뒤로 가기가 한 단계씩 정확히(보관함으로) 돌아온다.
 
-enum ProfileRoute: Hashable {
+enum ProfileRoute: Hashable, Identifiable {
+    var id: Self { self }
     case library, history, youtubeHistory, liked, comments, saved, subscriptions
 }
 
@@ -35,10 +36,10 @@ extension View {
     /// 밀어서 지우기 등: 바로 지우지 않고 한 번 더 묻는다
     func deleteConfirmation(_ title: String, message: String, button: String = "삭제",
                             pending: Binding<IndexSet?>, perform: @escaping (IndexSet) -> Void) -> some View {
-        confirmationDialog(title, isPresented: Binding(
+        alert(title, isPresented: Binding(
             get: { pending.wrappedValue != nil },
             set: { if !$0 { pending.wrappedValue = nil } }
-        ), titleVisibility: .visible) {
+        )) {
             Button(button, role: .destructive) {
                 if let offsets = pending.wrappedValue { withAnimation { perform(offsets) } }
                 pending.wrappedValue = nil
@@ -64,6 +65,7 @@ struct LibraryView: View {
     @State private var confirmLogout = false
     @State private var confirmClearHistory = false
     @State private var showBlocked = false
+    @State private var sheet: ProfileRoute?
 
     private var folderCount: Int { library.playlists.filter { $0.isMusic != true }.count + 1 }
 
@@ -74,17 +76,22 @@ struct LibraryView: View {
 
                 accountCard
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                    tile(.history, "시청 기록", "clock.arrow.circlepath",
-                         library.history.isEmpty ? "비어 있음" : "\(library.history.count)개")
-                    tile(.liked, "좋아요", "hand.thumbsup",
-                         account.isLoggedIn ? "YouTube 계정" : "로그인 필요")
-                    tile(.comments, "댓글", "text.bubble",
-                         comments.items.isEmpty ? "비어 있음" : "\(comments.items.count)개")
-                    tile(.saved, "저장", "bookmark", "폴더 \(folderCount)개")
-                    tile(.subscriptions, "구독 채널", "person.2",
-                         subs.channels.isEmpty ? (account.isLoggedIn ? "YouTube 계정" : "비어 있음") : "\(subs.channels.count)개")
+                VStack(spacing: 0) {
+                    menuRow("시청 기록", "clock.arrow.circlepath",
+                            library.history.isEmpty ? "비어 있음" : "\(library.history.count)개") { sheet = .history }
+                    rowDivider
+                    menuRow("좋아요", "hand.thumbsup",
+                            account.isLoggedIn ? "YouTube 계정에서 좋아요 표시한 동영상" : "로그인하면 볼 수 있어요") { sheet = .liked }
+                    rowDivider
+                    menuRow("댓글", "text.bubble",
+                            comments.items.isEmpty ? "이 앱에서 쓴 댓글" : "\(comments.items.count)개") { sheet = .comments }
+                    rowDivider
+                    menuRow("저장", "bookmark", "폴더 \(folderCount)개") { sheet = .saved }
+                    rowDivider
+                    menuRow("구독 채널", "person.2",
+                            subs.channels.isEmpty ? (account.isLoggedIn ? "YouTube 계정 구독" : "비어 있음") : "\(subs.channels.count)개") { sheet = .subscriptions }
                 }
+                .profileGlass()
 
                 if !library.history.isEmpty { recentRow }
 
@@ -102,34 +109,13 @@ struct LibraryView: View {
                         }
                     }
                 }
-                .tint(.primary)
                 .padding(16)
                 .profileGlass()
 
                 sectionTitle("차단")
-                Button { showBlocked = true } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "hand.raised")
-                            .font(.system(size: 17, weight: .medium))
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("차단한 채널").font(.body.weight(.medium))
-                            Text("\(blocklist.rules.count)개 · 어디에도 나오지 않고 재생되지 않아요")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .foregroundStyle(.primary)
-                    .padding(16)
-                    .contentShape(Rectangle())
+                menuRow("차단한 채널", "hand.raised",
+                        "\(blocklist.rules.count)개 · 어디에도 나오지 않고 재생되지 않아요") { showBlocked = true }
                     .profileGlass()
-                }
-                .buttonStyle(.plain)
 
                 Text("K-TUBE \(AppUpdate.currentVersion) (\(AppUpdate.currentBuild))")
                     .font(.caption2)
@@ -154,13 +140,14 @@ struct LibraryView: View {
         }
         .sheet(isPresented: $showLogin) { LoginView() }
         .sheet(isPresented: $showBlocked) { BlockedChannelsSheet() }
-        .confirmationDialog("로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {
+        .sheet(item: $sheet) { ProfileSheet(route: $0) }
+        .alert("로그아웃할까요?", isPresented: $confirmLogout) {
             Button("로그아웃", role: .destructive) { account.logout() }
             Button("취소", role: .cancel) {}
         } message: {
             Text("YouTube 계정의 구독·추천·시청 기록을 더 이상 가져오지 않아요. 다시 로그인하면 돌아와요.")
         }
-        .confirmationDialog("시청 기록을 모두 지울까요?", isPresented: $confirmClearHistory, titleVisibility: .visible) {
+        .alert("시청 기록을 모두 지울까요?", isPresented: $confirmClearHistory) {
             Button("모두 지우기", role: .destructive) { withAnimation { library.clearHistory() } }
             Button("취소", role: .cancel) {}
         } message: {
@@ -199,24 +186,35 @@ struct LibraryView: View {
             .padding(.top, 4)
     }
 
-    private func tile(_ route: ProfileRoute, _ title: String, _ icon: String, _ detail: String) -> some View {
-        NavigationLink(value: route) {
-            VStack(alignment: .leading, spacing: 16) {
+    /// 차단한 채널과 같은 메뉴 줄: 아이콘 · 제목/설명 · ›
+    private func menuRow(_ title: String, _ icon: String, _ detail: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 20, weight: .medium))
-                    .frame(height: 24)
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(title).font(.body.weight(.medium))
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
             .foregroundStyle(.primary)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             .contentShape(Rectangle())
-            .profileGlass(cornerRadius: 20)
         }
         .buttonStyle(.plain)
+    }
+
+    private var rowDivider: some View {
+        Divider().padding(.leading, 52)
     }
 
     private var recentRow: some View {
@@ -339,7 +337,7 @@ struct HistoryScreen: View {
         }
         .deleteConfirmation("시청 기록에서 지울까요?", message: "선택한 영상이 이 기기의 시청 기록에서 지워져요.",
                             pending: $pending) { library.removeHistory(at: $0) }
-        .confirmationDialog("시청 기록을 모두 지울까요?", isPresented: $confirmClear, titleVisibility: .visible) {
+        .alert("시청 기록을 모두 지울까요?", isPresented: $confirmClear) {
             Button("모두 지우기", role: .destructive) { withAnimation { library.clearHistory() } }
             Button("취소", role: .cancel) {}
         } message: {
@@ -576,9 +574,9 @@ struct SubscriptionsScreen: View {
         .toolbar(.visible, for: .navigationBar)
         .task { await loadRemote() }
         .refreshable { await loadRemote() }
-        .confirmationDialog("구독을 취소할까요?", isPresented: Binding(
+        .alert("구독을 취소할까요?", isPresented: Binding(
             get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }
-        ), titleVisibility: .visible, presenting: pendingRemove) { ch in
+        ), presenting: pendingRemove) { ch in
             Button("'\(ch.name)' 구독 취소", role: .destructive) {
                 withAnimation {
                     player.setSubscribed(ch, false)
@@ -614,5 +612,45 @@ struct SubscriptionsScreen: View {
         // 「//yt3...」처럼 앞부분이 빠진 주소 보정
         if url.scheme == nil, let fixed = URL(string: "https:" + url.absoluteString) { url = fixed }
         return url
+    }
+}
+
+
+// MARK: - 보관함 메뉴를 누르면 아래에서 올라오는 창 (차단한 채널과 같은 동작)
+
+struct ProfileSheet: View {
+    let route: ProfileRoute
+    @EnvironmentObject private var player: PlayerManager
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            content
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("완료") { dismiss() }
+                    }
+                }
+                .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
+                .profileDestinations()
+                .channelDestination()
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        // 영상을 누르면 창을 닫고 재생 화면으로
+        .onChange(of: player.current?.id) { _, _ in dismiss() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch route {
+        case .library: LibraryView()
+        case .history: HistoryScreen()
+        case .youtubeHistory: BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory")
+        case .liked: LikedScreen()
+        case .comments: MyCommentsScreen()
+        case .saved: SavedScreen()
+        case .subscriptions: SubscriptionsScreen()
+        }
     }
 }

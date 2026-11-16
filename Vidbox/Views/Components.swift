@@ -249,7 +249,7 @@ struct VideoMenu: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
-        .confirmationDialog("이 채널을 차단할까요?", isPresented: $confirmBlock, titleVisibility: .visible) {
+        .alert("이 채널을 차단할까요?", isPresented: $confirmBlock) {
             Button("차단", role: .destructive) {
                 withAnimation { Blocklist.shared.block(channelID: item.channelID, name: item.channel, avatar: item.channelThumbnail) }
             }

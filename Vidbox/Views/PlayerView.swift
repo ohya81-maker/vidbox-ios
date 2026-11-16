@@ -388,9 +388,9 @@ struct PlayerView: View {
                 } message: {
                     Text("받아 두면 인터넷 없이 재생할 수 있어요.")
                 }
-                .confirmationDialog("다운로드한 파일을 삭제할까요?", isPresented: Binding(
+                .alert("다운로드한 파일을 삭제할까요?", isPresented: Binding(
                     get: { pendingDeleteFile != nil }, set: { if !$0 { pendingDeleteFile = nil } }
-                ), titleVisibility: .visible, presenting: pendingDeleteFile) { file in
+                ), presenting: pendingDeleteFile) { file in
                     Button("삭제", role: .destructive) { DownloadManager.shared.delete(file) }
                     Button("취소", role: .cancel) {}
                 } message: { _ in

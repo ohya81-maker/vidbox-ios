@@ -148,9 +148,9 @@ struct BlockedChannelsSheet: View {
                     Button("완료") { dismiss() }
                 }
             }
-            .confirmationDialog("차단을 해제할까요?", isPresented: Binding(
+            .alert("차단을 해제할까요?", isPresented: Binding(
                 get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }
-            ), titleVisibility: .visible, presenting: pendingRemove) { rule in
+            ), presenting: pendingRemove) { rule in
                 Button("'\(rule.name)' 차단 해제", role: .destructive) {
                     withAnimation { blocklist.unblock(rule) }
                 }

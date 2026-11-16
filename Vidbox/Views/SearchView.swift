@@ -175,9 +175,9 @@ struct SearchView: View {
                 Label("검색 기록에서 삭제", systemImage: "trash")
             }
         }
-        .confirmationDialog("검색 기록에서 삭제할까요?", isPresented: Binding(
+        .alert("검색 기록에서 삭제할까요?", isPresented: Binding(
             get: { pendingSearch == record.query }, set: { if !$0 { pendingSearch = nil } }
-        ), titleVisibility: .visible) {
+        )) {
             Button("삭제", role: .destructive) { library.removeSearch(record.query); pendingSearch = nil }
             Button("취소", role: .cancel) { pendingSearch = nil }
         } message: {

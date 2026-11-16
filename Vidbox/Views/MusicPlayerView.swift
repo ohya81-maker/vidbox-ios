@@ -175,10 +175,13 @@ struct MusicPlayerView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .confirmationDialog("다운로드한 음원을 삭제할까요?", isPresented: $confirmDeleteDownload, titleVisibility: .visible) {
+        .alert("다운로드한 음원을 삭제할까요?", isPresented: $confirmDeleteDownload) {
             Button("삭제", role: .destructive) {
                 if let f = DownloadManager.shared.file(item.id, .audio) { DownloadManager.shared.delete(f) }
             }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("기기에서 지워져요. 다시 들으려면 다시 받아야 해요.")
         }
     }
 
