@@ -174,7 +174,7 @@ final class JellyfinSession: @unchecked Sendable {
         let s = server
         let session = UUID().uuidString
         if audio {
-            let q = "UserId=\(userID)&DeviceId=\(deviceID)&api_key=\(token)&PlaySessionId=\(session)"
+            let q = "UserId=\(userID)&DeviceId=\(deviceID)&ApiKey=\(token)&PlaySessionId=\(session)"
                 + "&MaxStreamingBitrate=320000&Container=mp3,aac,m4a%7Caac,m4b%7Caac,flac,alac,m4a%7Calac,wav"
                 + "&TranscodingContainer=ts&TranscodingProtocol=hls&AudioCodec=aac"
             return [URL(string: "\(s)/Audio/\(itemID)/universal?\(q)")].compactMap { $0 }
@@ -184,9 +184,9 @@ final class JellyfinSession: @unchecked Sendable {
         let source = choice?.mediaSourceID ?? itemID
         // 자막을 켜야 하면 원본 파일 직접 재생은 건너뛴다 (자막은 HLS로만 함께 보낼 수 있음)
         if choice?.subtitleIndex == nil, c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
-            urls.append(URL(string: "\(s)/Videos/\(itemID)/stream?static=true&api_key=\(token)&MediaSourceId=\(source)"))
+            urls.append(URL(string: "\(s)/Videos/\(itemID)/stream?static=true&ApiKey=\(token)&MediaSourceId=\(source)"))
         }
-        var base = "\(s)/Videos/\(itemID)/master.m3u8?api_key=\(token)&MediaSourceId=\(source)&DeviceId=\(deviceID)&PlaySessionId=\(session)"
+        var base = "\(s)/Videos/\(itemID)/master.m3u8?ApiKey=\(token)&MediaSourceId=\(source)&DeviceId=\(deviceID)&PlaySessionId=\(session)"
         // Jellyfin 계정 설정(선호 음성·자막 언어, 자막 모드)에 따라 서버가 고른 트랙
         if let a = choice?.audioIndex { base += "&AudioStreamIndex=\(a)" }
         if let sub = choice?.subtitleIndex {

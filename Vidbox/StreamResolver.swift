@@ -68,6 +68,8 @@ actor StreamResolver {
     // MARK: Public
 
     /// YouTube가 아닌 영상의 재생 주소 (id → 후보, 해당 없으면 nil). 앱 시작 때 등록
+    /// 특정 주소(예: Jellyfin 서버)로 재생할 때 붙일 HTTP 헤더
+    nonisolated(unsafe) static var externalHeaders: (@Sendable (URL) -> [String: String]?)?
     nonisolated(unsafe) static var externalSources: (@Sendable (String, Bool) async -> [PlaybackSource]?)?
 
     func candidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
@@ -326,7 +328,11 @@ actor StreamResolver {
     // MARK: - AVPlayerItem 만들기
 
     nonisolated static func makeItem(_ source: PlaybackSource) async throws -> AVPlayerItem {
-        let options: [String: Any] = [AVURLAssetHTTPUserAgentKey: iosUserAgent]
+        var options: [String: Any] = [AVURLAssetHTTPUserAgentKey: iosUserAgent]
+        // 내 미디어(Jellyfin) 서버: 영상·조각 요청에도 로그인 헤더를 붙인다
+        if case .single(let url) = source, let headers = externalHeaders?(url) {
+            options["AVURLAssetHTTPHeaderFieldsKey"] = headers
+        }
         switch source {
         case .single(let url), .limited(let url):
             return AVPlayerItem(asset: AVURLAsset(url: url, options: options))

@@ -159,6 +159,11 @@ final class PlayerManager: ObservableObject {
         // 이전 버전이 저장한 "안 되는 방식" 기록 삭제 (오디오만 재생되는 문제의 원인)
         UserDefaults.standard.removeObject(forKey: "brokenSourceKinds")
         // 내 미디어(Jellyfin) 영상은 Jellyfin 서버 주소로 재생
+        StreamResolver.externalHeaders = { url in
+            let session = JellyfinSession.shared
+            guard let host = URL(string: session.server)?.host, url.host == host, session.token != nil else { return nil }
+            return ["Authorization": session.authHeader]
+        }
         StreamResolver.externalSources = { id, audio in
             JellyfinCatalog.isJellyfin(id) ? await JellyfinCatalog.shared.sources(for: id, audioOnly: audio) : nil
         }
