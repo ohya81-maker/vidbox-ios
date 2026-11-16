@@ -95,6 +95,7 @@ final class PlayerManager: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var artwork: MPMediaItemArtwork?
     private var isInBackground = false
+    private var backgroundedAt: Date?
     private let layers = NSHashTable<AVPlayerLayer>.weakObjects()
     // 재생 후보와 자동 전환(감시 장치)
     private var candidates: [PlaybackSource] = []
@@ -290,6 +291,10 @@ final class PlayerManager: ObservableObject {
         }
         activateAudioSession()
         player.play()
+        // 재생을 눌렀는데 시간이 흐르지 않으면(끊긴 스트림) 같은 위치에서 다시 불러온다
+        let now = player.currentTime().seconds
+        seekGeneration += 1
+        armSeekWatchdog(target: now.isFinite ? now : currentTime, generation: seekGeneration)
     }
 
     func pause() {
@@ -651,6 +656,7 @@ final class PlayerManager: ObservableObject {
 
     private func enterBackground() {
         isInBackground = true
+        backgroundedAt = Date()
         let wasPlaying = player.timeControlStatus != .paused
         for layer in layers.allObjects { layer.player = nil }
         if wasPlaying { player.play() }
@@ -659,6 +665,23 @@ final class PlayerManager: ObservableObject {
     private func enterForeground() {
         isInBackground = false
         for layer in layers.allObjects { layer.player = player }
+        guard let item = current, !audioOnly || player.currentItem == nil else { return }
+        let away = Date().timeIntervalSince(backgroundedAt ?? Date())
+        let playing = player.timeControlStatus != .paused
+        let broken = player.currentItem == nil || player.currentItem?.status == .failed
+        // 멈춘 채로 오래 나가 있으면 앱 안의 재생 중계(127.0.0.1)가 iOS에 의해 끊겨 화면이 검게 남는다
+        // → 같은 위치에서 새로 불러온다 (자동 재생은 하지 않음)
+        if broken || (!playing && away > 15) {
+            let position = player.currentTime().seconds.isFinite ? player.currentTime().seconds : currentTime
+            Task { [weak self] in
+                if away > 1800 { await StreamResolver.shared.invalidate(item.id) }
+                guard let self, self.current?.id == item.id else { return }
+                self.beginLoading(item: item, audio: self.audioOnly, position: position, autoPlay: false)
+            }
+        } else if !playing {
+            // 화면을 다시 붙인 직후 멈춘 영상이 검게 보이지 않도록 같은 위치로 한 번 이동해 프레임을 다시 그린다
+            player.seek(to: player.currentTime(), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
     }
 
     // MARK: - Audio session & Now Playing
