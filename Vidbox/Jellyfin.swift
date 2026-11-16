@@ -183,7 +183,7 @@ final class JellyfinSession: @unchecked Sendable {
         let c = (choice?.container ?? container ?? "").lowercased()
         let source = choice?.mediaSourceID ?? itemID
         // 자막을 켜야 하면 원본 파일 직접 재생은 건너뛴다 (자막은 HLS로만 함께 보낼 수 있음)
-        if choice?.subtitleIndex == nil, c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
+        if choice?.subtitleIndex == nil, JFQuality.current == .original, c.contains("mp4") || c.contains("m4v") || c.contains("mov") {
             urls.append(URL(string: "\(s)/Videos/\(itemID)/stream?static=true&ApiKey=\(token)&MediaSourceId=\(source)"))
         }
         var base = "\(s)/Videos/\(itemID)/master.m3u8?ApiKey=\(token)&MediaSourceId=\(source)&DeviceId=\(deviceID)&PlaySessionId=\(session)"
@@ -192,6 +192,12 @@ final class JellyfinSession: @unchecked Sendable {
         if let sub = choice?.subtitleIndex {
             // 글자 자막(srt·ass 등)은 HLS 자막으로, 그림 자막(PGS 등)은 영상에 입혀서
             base += "&SubtitleStreamIndex=\(sub)&SubtitleMethod=" + ((choice?.subtitleIsText ?? true) ? "Hls" : "Encode")
+        }
+        let quality = JFQuality.current
+        if quality != .original {
+            return [URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
+                        + "&MaxStreamingBitrate=\(quality.rawValue)&VideoBitrate=\(quality.rawValue - 192_000)"
+                        + "&TranscodingMaxAudioChannels=2&AllowVideoStreamCopy=false")].compactMap { $0 }
         }
         if choice?.subtitleIsText == false {
             return [URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
@@ -302,12 +308,21 @@ enum JellyfinAPI {
         let streams = source["MediaStreams"] as? [[String: Any]] ?? []
         let subIndex = source["DefaultSubtitleStreamIndex"] as? Int
         let sub = streams.first { ($0["Index"] as? Int) == subIndex && ($0["Type"] as? String) == "Subtitle" }
+        func tracks(_ type: String) -> [JFTrack] {
+            streams.filter { ($0["Type"] as? String) == type }.compactMap { st in
+                guard let i = st["Index"] as? Int else { return nil }
+                let title = (st["DisplayTitle"] as? String) ?? (st["Language"] as? String) ?? "\(type) \(i)"
+                return JFTrack(index: i, title: title, isText: st["IsTextSubtitleStream"] as? Bool ?? true)
+            }
+        }
         return JFPlaybackChoice(
             mediaSourceID: source["Id"] as? String,
             container: source["Container"] as? String,
             audioIndex: source["DefaultAudioStreamIndex"] as? Int,
             subtitleIndex: (subIndex ?? -1) >= 0 && sub != nil ? subIndex : nil,
-            subtitleIsText: sub?["IsTextSubtitleStream"] as? Bool ?? true
+            subtitleIsText: sub?["IsTextSubtitleStream"] as? Bool ?? true,
+            audioTracks: tracks("Audio"),
+            subtitleTracks: tracks("Subtitle")
         )
     }
 
@@ -381,18 +396,57 @@ final class JellyfinCatalog: @unchecked Sendable {
         let raw = String(id.dropFirst(3))
         let info = item(raw)
         let audio = info?.isAudio ?? audioOnly
-        let choice = audio ? nil : await JellyfinAPI.playbackChoice(itemID: raw)
+        var choice = audio ? nil : await JellyfinAPI.playbackChoice(itemID: raw)
+        lock.lock()
+        let override = overrides[raw]
+        lock.unlock()
+        if var c = choice, let o = override {
+            if let a = o.audioIndex { c.audioIndex = a }
+            if let sIdx = o.subtitleIndex {
+                if sIdx < 0 {
+                    c.subtitleIndex = nil
+                } else {
+                    c.subtitleIndex = sIdx
+                    c.subtitleIsText = c.subtitleTracks.first { $0.index == sIdx }?.isText ?? true
+                }
+            }
+            choice = c
+        }
         lock.lock(); choices[raw] = choice; lock.unlock()
         return JellyfinSession.shared.playbackURLs(itemID: raw, audio: audio, container: info?.Container, choice: choice)
             .map { PlaybackSource.single($0) }
     }
 
     private var choices: [String: JFPlaybackChoice?] = [:]
+    private var overrides: [String: JFOverride] = [:]
+
+    /// 지금 재생 중인 영상의 트랙 정보 (⚙️ 화면에서 사용)
+    func choice(for id: String) -> JFPlaybackChoice? {
+        lock.lock(); defer { lock.unlock() }
+        return choices[String(id.dropFirst(3))] ?? nil
+    }
+
+    func setOverride(_ id: String, audio: Int? = nil, subtitle: Int? = nil) {
+        let raw = String(id.dropFirst(3))
+        lock.lock()
+        var o = overrides[raw] ?? JFOverride()
+        if let audio { o.audioIndex = audio }
+        if let subtitle { o.subtitleIndex = subtitle }
+        overrides[raw] = o
+        lock.unlock()
+    }
     /// 이 영상에 자막을 켜기로 했는지 (재생기가 자막 트랙을 골라 켤 때 사용)
     func wantsSubtitles(_ id: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return (choices[String(id.dropFirst(3))] ?? nil)?.subtitleIndex != nil
     }
+}
+
+struct JFTrack: Sendable, Hashable, Identifiable {
+    var index: Int
+    var title: String
+    var isText: Bool = true
+    var id: Int { index }
 }
 
 struct JFPlaybackChoice: Sendable {
@@ -401,4 +455,31 @@ struct JFPlaybackChoice: Sendable {
     var audioIndex: Int?
     var subtitleIndex: Int?
     var subtitleIsText: Bool
+    var audioTracks: [JFTrack] = []
+    var subtitleTracks: [JFTrack] = []
+}
+
+/// 재생 화면 ⚙️에서 고른 값 (영상마다 음성·자막, 화질은 전체 공통)
+struct JFOverride: Sendable {
+    var audioIndex: Int?
+    /// -1 = 자막 끄기
+    var subtitleIndex: Int?
+}
+
+enum JFQuality: Int, CaseIterable, Identifiable {
+    case original = 0, high = 20_000_000, hd = 8_000_000, sd = 3_000_000, low = 1_200_000
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .original: return "원본 (가능하면 변환 없이)"
+        case .high: return "최대 20Mbps"
+        case .hd: return "최대 8Mbps (1080p)"
+        case .sd: return "최대 3Mbps (720p)"
+        case .low: return "최대 1.2Mbps (데이터 절약)"
+        }
+    }
+    static var current: JFQuality {
+        get { JFQuality(rawValue: UserDefaults.standard.integer(forKey: "jf.maxBitrate")) ?? .original }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "jf.maxBitrate") }
+    }
 }

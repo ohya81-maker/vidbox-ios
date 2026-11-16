@@ -13,6 +13,7 @@ struct PlayerView: View {
     @State private var relatedFilter = 0
     @State private var showComments = false
     @State private var showChannel = false
+    @State private var showJFSettings = false
     /// 댓글 창을 위로 쓸어 올려 화면 전체로 키운 상태
     @State private var commentsFull = false
     @State private var commentsDrag: CGFloat = 0
@@ -273,6 +274,14 @@ struct PlayerView: View {
             }
             iconButton("infinity", label: "자동재생", tint: player.autoplay ? .accentColor : nil) {
                 player.autoplay.toggle()
+            }
+            // 내 미디어: 자막·음성·화질 설정
+            if isJF {
+                iconButton("gearshape", label: "재생 설정") { showJFSettings = true }
+                    .sheet(isPresented: $showJFSettings) {
+                        JellyfinPlaybackSettings(videoID: item.id)
+                            .presentationDetents([.medium, .large])
+                    }
             }
             if !isJF {
                 ShareLink(item: item.shareURL) {
@@ -1200,5 +1209,66 @@ struct DownloadIconLabel: View {
             Image(systemName: done ? "checkmark.circle.fill" : "arrow.down.circle")
                 .font(.system(size: 20, weight: .regular))
         }
+    }
+}
+
+// MARK: - 내 미디어(Jellyfin) 재생 설정: 자막 · 음성 · 화질
+
+struct JellyfinPlaybackSettings: View {
+    let videoID: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var quality = JFQuality.current
+
+    var body: some View {
+        let choice = JellyfinCatalog.shared.choice(for: videoID)
+        NavigationStack {
+            List {
+                Section("자막") {
+                    row("끄기", selected: choice?.subtitleIndex == nil) { apply(subtitle: -1) }
+                    ForEach(choice?.subtitleTracks ?? []) { t in
+                        row(t.title, selected: choice?.subtitleIndex == t.index) { apply(subtitle: t.index) }
+                    }
+                }
+                if (choice?.audioTracks.count ?? 0) > 1 {
+                    Section("음성") {
+                        ForEach(choice?.audioTracks ?? []) { t in
+                            row(t.title, selected: choice?.audioIndex == t.index) { apply(audio: t.index) }
+                        }
+                    }
+                }
+                Section {
+                    ForEach(JFQuality.allCases) { q in
+                        row(q.label, selected: quality == q) {
+                            JFQuality.current = q
+                            quality = q
+                            PlayerManager.shared.reloadKeepingPosition()
+                            dismiss()
+                        }
+                    }
+                } header: {
+                    Text("화질")
+                } footer: {
+                    Text("처음 값은 Jellyfin 계정 설정(자막 모드·선호 언어)을 따릅니다. 화질은 모든 미디어 영상에 적용돼요.")
+                }
+            }
+            .navigationTitle("재생 설정")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func row(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if selected { Image(systemName: "checkmark").foregroundStyle(.tint) }
+            }
+        }
+    }
+
+    private func apply(audio: Int? = nil, subtitle: Int? = nil) {
+        JellyfinCatalog.shared.setOverride(videoID, audio: audio, subtitle: subtitle)
+        PlayerManager.shared.reloadKeepingPosition()
+        dismiss()
     }
 }

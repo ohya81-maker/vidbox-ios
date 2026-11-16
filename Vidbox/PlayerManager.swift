@@ -325,6 +325,15 @@ final class PlayerManager: ObservableObject {
         }
     }
 
+    /// 재생 설정(자막·음성·화질)을 바꾼 뒤 같은 위치에서 다시 불러온다
+    func reloadKeepingPosition() {
+        guard let item = current else { return }
+        let now = player.currentTime().seconds
+        let position = now.isFinite ? now : currentTime
+        userPaused = false
+        beginLoading(item: item, audio: audioOnly, position: position, autoPlay: true)
+    }
+
     func retry() {
         guard let item = current else { return }
         Task {

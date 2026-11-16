@@ -106,13 +106,15 @@ struct VideoCard: View {
             }
             .buttonStyle(.plain)
             HStack(alignment: .top, spacing: 12) {
-                // 채널 사진: 누르면 채널 화면
-                Button {
-                    if item.channelID != nil { showChannel = true } else { play() }
-                } label: {
-                    AvatarView(url: item.channelThumbnail)
+                // 채널 사진: 누르면 채널 화면 (내 미디어 항목은 채널이 없어 숨김)
+                if !item.id.hasPrefix("jf:") {
+                    Button {
+                        if item.channelID != nil { showChannel = true } else { play() }
+                    } label: {
+                        AvatarView(url: item.channelThumbnail)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
                 Button(action: play) {
                     HStack(alignment: .top, spacing: 0) {
                         VStack(alignment: .leading, spacing: 4) {
