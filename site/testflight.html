@@ -59,7 +59,11 @@
       <li>이 화면으로 돌아오면 자동으로 다음 단계로 넘어가요.</li>
     </ol>
     <div class="state" style="margin-top:14px"><div class="spin"></div><span>수락을 기다리는 중…</span></div>
+    <p class="msg" id="sentto" style="color:var(--sub)"></p>
     <button class="btn secondary" id="check">수락했어요</button>
+    <button class="btn secondary" id="resend">초대 메일 다시 보내기</button>
+    <button class="btn secondary" id="redo">다른 이메일로 신청</button>
+    <p class="msg hidden" id="resendmsg"></p>
   </section>
 
   <section class="card hidden" id="tester">
@@ -95,7 +99,9 @@
   var timer = null;
   function handle(s) {
     if (s.state === "tester") { save("stage", "tester"); clearTimeout(timer); show("tester"); return; }
-    if (s.state === "invited") { save("stage", "invited"); show("invited"); clearTimeout(timer); timer = setTimeout(poll, 15000); return; }
+    if (s.state === "invited") { save("stage", "invited"); show("invited");
+      $("sentto").innerHTML = "보낸 주소: <b></b> — 주소가 틀렸다면 「다른 이메일로 신청」을 눌러요.";
+      $("sentto").querySelector("b").textContent = s.email || load("email"); clearTimeout(timer); timer = setTimeout(poll, 15000); return; }
     show("form");
     $("formerr").textContent = texts[s.state] || ("신청하지 못했어요: " + (s.detail || s.state));
     $("formerr").classList.remove("hidden");
@@ -110,6 +116,18 @@
       .then(function () { $("go").disabled = false; $("go").textContent = "신청하기"; });
   };
   $("check").onclick = function () { call("check").then(handle); };
+  $("resend").onclick = function () {
+    var b = $("resend"), m = $("resendmsg");
+    b.disabled = true; b.textContent = "보내는 중…";
+    call("resend").then(function (s) {
+      handle(s);
+      m.classList.remove("hidden");
+      m.textContent = s.state === "invited" ? "새 초대 메일을 보냈어요. 몇 분 안에 도착해요 (스팸함, 프로모션함도 확인)." :
+                      s.state === "tester" ? "" : "다시 보내지 못했어요: " + (s.detail || s.state);
+    }).catch(function () { m.classList.remove("hidden"); m.textContent = "네트워크 오류"; })
+      .then(function () { b.disabled = false; b.textContent = "초대 메일 다시 보내기"; });
+  };
+  $("redo").onclick = function () { clearTimeout(timer); save("stage", ""); $("formerr").classList.add("hidden"); show("form"); $("email").focus(); };
   document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && load("stage") === "invited") poll(); });
 
   var stage = load("stage");

@@ -80,7 +80,14 @@ try {
         add_tester($email, $first, $last);
         kt_json(['state' => 'tester']);
     }
-    if (find_invite($email)) kt_json(['state' => 'invited']);
+    $inv = find_invite($email);
+    // 메일이 안 왔을 때: 기존 초대를 지우고 새로 보낸다 (Apple이 메일을 다시 보냄)
+    if ($inv && $action === 'resend') {
+        [$c, $js] = kt_asc('DELETE', '/userInvitations/' . $inv['id']);
+        if ($c >= 300 && $c != 404) kt_json(['state' => 'error', 'detail' => kt_asc_error($js)]);
+        $inv = null;
+    }
+    if ($inv) kt_json(['state' => 'invited', 'email' => $email, 'expires' => $inv['attributes']['expirationDate'] ?? null]);
     if ($action === 'check') kt_json(['state' => 'none']);
 
     [$c, $js] = kt_asc('POST', '/userInvitations', ['data' => [
@@ -90,7 +97,7 @@ try {
         'relationships' => ['visibleApps' => ['data' => [['type' => 'apps', 'id' => KT_APP_ID]]]],
     ]]);
     if ($c >= 300) kt_json(['state' => 'error', 'detail' => kt_asc_error($js)]);
-    kt_json(['state' => 'invited']);
+    kt_json(['state' => 'invited', 'email' => $email, 'sent' => true]);
 } catch (Throwable $e) {
     kt_json(['state' => 'error', 'detail' => $e->getMessage()]);
 }
