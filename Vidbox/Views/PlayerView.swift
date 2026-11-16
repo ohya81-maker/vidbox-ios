@@ -12,7 +12,7 @@ struct PlayerView: View {
     @State private var showDownload = false
     @State private var relatedFilter = 0
     @State private var showComments = false
-    @State private var showChannel = false
+    @State private var navPath = NavigationPath()
     @State private var showJFSettings = false
     /// 댓글 창을 위로 쓸어 올려 화면 전체로 키운 상태
     @State private var commentsFull = false
@@ -33,7 +33,12 @@ struct PlayerView: View {
                 } else if player.isQueueMode && (player.audioOnly || player.musicVideoMode) {
                     MusicPlayerView()
                 } else {
-                    portrait(width: geo.size.width)
+                    // 채널 사진·이름을 누르면 YouTube처럼 채널 화면이 옆에서 밀려 들어온다 (뒤로 오면 그대로 재생 화면)
+                    NavigationStack(path: $navPath) {
+                        portrait(width: geo.size.width)
+                            .toolbar(.hidden, for: .navigationBar)
+                            .channelDestination()
+                    }
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -169,14 +174,14 @@ struct PlayerView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .contentShape(Rectangle())
-                .onTapGesture { if player.watchInfo != nil { showChannel = true } }
+                .onTapGesture { openChannel() }
             // YouTube처럼 한 줄에: 채널 사진 · 구독 ……… 저장 · 다운로드 · 자동재생 · 공유 (아이콘만)
             // 내 미디어 영상은 이 줄 없음 (설정은 제목 줄 끝)
             if !JellyfinCatalog.isJellyfin(item.id) {
             HStack(spacing: 10) {
                 // 채널 사진을 누르면 채널 화면 (내 미디어 영상은 채널이 없어 숨김)
                 if !JellyfinCatalog.isJellyfin(item.id) {
-                    Button { if player.watchInfo != nil { showChannel = true } } label: {
+                    Button { openChannel() } label: {
                         AvatarView(url: player.watchInfo?.channelAvatar ?? item.channelThumbnail, size: 36)
                     }
                     .buttonStyle(.plain)
@@ -203,11 +208,11 @@ struct PlayerView: View {
             }
         }
         .padding(.horizontal, 14)
-        .sheet(isPresented: $showChannel) {
-            if let info = player.watchInfo {
-                ChannelView(channelID: info.channelID, fallbackName: info.channelName, fallbackAvatar: info.channelAvatar)
-            }
-        }
+    }
+
+    private func openChannel() {
+        guard let info = player.watchInfo else { return }
+        navPath.append(ChannelRoute(id: info.channelID, name: info.channelName, avatar: info.channelAvatar))
     }
 
     /// YouTube처럼 「댓글 1.2만」 + 첫 댓글 한 줄. 누르면 전체 댓글 창
@@ -385,6 +390,7 @@ struct PlayerView: View {
             }
         }
         .onChange(of: player.current?.id) { _, _ in
+            navPath = NavigationPath()
             relatedFilter = 0
             showComments = false
             commentsFull = false

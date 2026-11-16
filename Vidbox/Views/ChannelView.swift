@@ -7,7 +7,6 @@ struct ChannelView: View {
     var fallbackAvatar: URL? = nil
 
     @EnvironmentObject private var player: PlayerManager
-    @Environment(\.dismiss) private var dismiss
     @State private var page: ChannelPage?
     @State private var videos: [VideoItem] = []
     @State private var next: String?
@@ -15,17 +14,12 @@ struct ChannelView: View {
     @State private var failed = false
 
     var body: some View {
-        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
                     LazyVStack(spacing: 18) {
                         ForEach(videos) { item in
-                            // 채널 화면을 먼저 닫고 재생 (홈에서 연 경우에도 재생 화면이 정상으로 뜨게)
-                            VideoCard(item: item, onPlay: { picked in
-                                dismiss()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { player.play(picked) }
-                            })
+                            VideoCard(item: item)
                                 .onAppear { if item.id == videos.last?.id { Task { await loadMore() } } }
                         }
                         if loading {
@@ -41,12 +35,7 @@ struct ChannelView: View {
             }
             .navigationTitle(page?.name ?? fallbackName)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: { Image(systemName: "chevron.down") }
-                }
-            }
-        }
+            .toolbar(.visible, for: .navigationBar)
         .task {
             if page == nil { await load() }
         }
@@ -132,5 +121,21 @@ struct ChannelView: View {
             return v
         })
         next = more.continuation
+    }
+}
+
+/// 채널 화면으로 가는 길 (YouTube처럼 옆으로 밀려 들어오는 화면)
+struct ChannelRoute: Hashable {
+    let id: String
+    var name: String = ""
+    var avatar: URL? = nil
+}
+
+extension View {
+    /// 이 화면 묶음(NavigationStack)에서 채널 화면으로 넘어갈 수 있게
+    func channelDestination() -> some View {
+        navigationDestination(for: ChannelRoute.self) { r in
+            ChannelView(channelID: r.id, fallbackName: r.name, fallbackAvatar: r.avatar)
+        }
     }
 }

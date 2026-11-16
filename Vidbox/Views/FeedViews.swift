@@ -261,6 +261,7 @@ struct HomeView: View {
             .task(id: account.revision) { await loadSelected() }
             .navigationDestination(isPresented: $showLibrary) { LibraryView() }
             .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
+            .channelDestination()
         }
     }
 

@@ -92,7 +92,6 @@ struct VideoCard: View {
     var onPlay: ((VideoItem) -> Void)? = nil
     /// 재생기를 "지켜보지" 않는다 — 재생 상태가 바뀔 때마다 피드의 카드가 전부 다시 그려지지 않도록
     private var player: PlayerManager { PlayerManager.shared }
-    @State private var showChannel = false
 
     private func play() {
         if let onPlay { onPlay(item) } else { player.play(item) }
@@ -107,13 +106,14 @@ struct VideoCard: View {
             .buttonStyle(.plain)
             HStack(alignment: .top, spacing: 12) {
                 // 채널 사진: 누르면 채널 화면 (내 미디어 항목은 채널이 없어 숨김)
-                if !item.id.hasPrefix("jf:") {
-                    Button {
-                        if item.channelID != nil { showChannel = true } else { play() }
-                    } label: {
+                if let channelID = item.channelID {
+                    NavigationLink(value: ChannelRoute(id: channelID, name: item.channel, avatar: item.channelThumbnail)) {
                         AvatarView(url: item.channelThumbnail)
                     }
                     .buttonStyle(.plain)
+                } else if !item.id.hasPrefix("jf:") {
+                    Button(action: play) { AvatarView(url: item.channelThumbnail) }
+                        .buttonStyle(.plain)
                 }
                 Button(action: play) {
                     HStack(alignment: .top, spacing: 0) {
@@ -140,12 +140,6 @@ struct VideoCard: View {
         .padding(.bottom, 18)
         // 화면에 보이는 영상은 재생 주소를 미리 받아 둬서 누르면 바로 시작
         .onAppear { Task { await StreamResolver.shared.prefetch([item.id]) } }
-        .sheet(isPresented: $showChannel) {
-            if let id = item.channelID {
-                ChannelView(channelID: id, fallbackName: item.channel, fallbackAvatar: item.channelThumbnail)
-                    .environmentObject(PlayerManager.shared)
-            }
-        }
     }
 }
 

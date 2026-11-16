@@ -55,6 +55,7 @@ struct SearchView: View {
             }
             .scrollDismissesKeyboard(.immediately)
             .toolbar(.hidden, for: .navigationBar)
+            .channelDestination()
             .task(id: text) {
                 guard typing else { suggestions = []; return }
                 try? await Task.sleep(nanoseconds: 200_000_000)
