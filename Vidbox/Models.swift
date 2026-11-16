@@ -17,6 +17,12 @@ struct VideoItem: Identifiable, Hashable, Codable {
         thumbnail ?? URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg")!
     }
 
+    /// 큰 카드(아이패드 등)에서 쓰는 1280x720 썸네일. 추천 목록의 썸네일은 작아서 크게 늘리면 깨져 보인다
+    var largeThumbnail: URL? {
+        guard id.count == 11, !id.contains(":") else { return nil }
+        return URL(string: "https://i.ytimg.com/vi/\(id)/hq720.jpg")
+    }
+
     /// "채널 · 조회수 · 날짜" 형태의 메타 정보
     var metaLine: String {
         [channel, views, published].compactMap { s in

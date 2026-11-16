@@ -19,6 +19,7 @@ struct PlayerView: View {
     @State private var commentsDrag: CGFloat = 0
     /// 아래 목록을 위로 올린 만큼 (세로 영상은 이만큼 재생 화면이 줄어든다)
     @State private var scrollY: CGFloat = 0
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -386,7 +387,10 @@ struct PlayerView: View {
                 .padding(.horizontal, 14)
             } else {
                 // YouTube처럼: 다음 영상은 홈 피드와 같은 큰 카드로, 내릴수록 끝없이
-                LazyVStack(spacing: 18) {
+                // 아이패드처럼 넓은 화면은 여러 열로
+                LazyVGrid(columns: sizeClass == .regular
+                          ? [GridItem(.adaptive(minimum: 320), spacing: 16, alignment: .top)]
+                          : [GridItem(.flexible())], spacing: 18) {
                     ForEach(list) { item in
                         VideoCard(item: item)
                             .onAppear {
@@ -396,6 +400,7 @@ struct PlayerView: View {
                             }
                     }
                 }
+                .padding(.horizontal, sizeClass == .regular ? 16 : 0)
             }
         }
         .onChange(of: player.current?.id) { _, _ in

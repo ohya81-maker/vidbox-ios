@@ -30,17 +30,25 @@ struct ThumbnailView: View {
     var isLive = false
     var cornerRadius: CGFloat = 0
     var aspect: CGFloat = 16 / 9
+    /// 큰 카드용 고해상도 썸네일 (없으면 기본 썸네일로)
+    var hiRes: URL? = nil
 
     var body: some View {
         Color(.secondarySystemBackground)
             .aspectRatio(aspect, contentMode: .fit)
             .overlay {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        Color(.secondarySystemBackground)
+                if let hiRes {
+                    AsyncImage(url: hiRes) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else if phase.error != nil {
+                            base
+                        } else {
+                            Color(.secondarySystemBackground)
+                        }
                     }
+                } else {
+                    base
                 }
             }
             .clipped()
@@ -52,6 +60,16 @@ struct ThumbnailView: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+
+    private var base: some View {
+        AsyncImage(url: url) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFill()
+            } else {
+                Color(.secondarySystemBackground)
+            }
+        }
     }
 
     private func badge(_ text: String, background: Color) -> some View {
@@ -100,7 +118,7 @@ struct VideoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button(action: play) {
-                ThumbnailView(url: item.bestThumbnail, duration: item.duration, isLive: item.isLive)
+                ThumbnailView(url: item.bestThumbnail, duration: item.duration, isLive: item.isLive, hiRes: item.largeThumbnail)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
