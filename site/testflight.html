@@ -70,10 +70,12 @@
     <h2>3. TestFlight에서 설치</h2>
     <ol>
       <li><b>TestFlight</b> 앱을 설치합니다. (Apple 공식 무료 앱)</li>
-      <li>Apple에서 온 「K-TUBE Player 테스트 초대」 메일의 <b>View in TestFlight</b>를 누르거나, TestFlight 앱을 열면 K-TUBE가 보여요.</li>
-      <li><b>설치</b>를 누르면 끝. 새 버전은 TestFlight에서 <b>업데이트</b>만 누르면 돼요.</li>
+      <li>신청한 이메일로 온 <b>「K-TUBE Player 테스트 초대」</b> 메일(앞 단계와 다른 두 번째 메일)을 <b>이 기기에서</b> 열고 <b>View in TestFlight</b>를 누릅니다. 이 메일을 수락해야 TestFlight에 K-TUBE가 나타나요.</li>
+      <li>TestFlight에서 <b>수락</b> → <b>설치</b>를 누르면 끝. 새 버전은 <b>업데이트</b>만 누르면 돼요.</li>
     </ol>
     <a class="btn" href="https://apps.apple.com/app/testflight/id899247664">TestFlight 앱 받기</a>
+    <button class="btn secondary" id="tfresend">테스트 초대 메일 다시 보내기</button>
+    <p class="msg hidden" id="tfmsg"></p>
   </section>
 </main>
 <script>
@@ -126,6 +128,15 @@
                       s.state === "tester" ? "" : "다시 보내지 못했어요: " + (s.detail || s.state);
     }).catch(function () { m.classList.remove("hidden"); m.textContent = "네트워크 오류"; })
       .then(function () { b.disabled = false; b.textContent = "초대 메일 다시 보내기"; });
+  };
+  $("tfresend").onclick = function () {
+    var b = $("tfresend"), m = $("tfmsg");
+    b.disabled = true; b.textContent = "보내는 중…";
+    call("tfresend").then(function (s) {
+      m.classList.remove("hidden");
+      m.textContent = s.sent ? "테스트 초대 메일을 다시 보냈어요. 메일의 View in TestFlight를 눌러요." : "보내지 못했어요: " + (s.detail || s.state);
+    }).catch(function () { m.classList.remove("hidden"); m.textContent = "네트워크 오류"; })
+      .then(function () { b.disabled = false; b.textContent = "테스트 초대 메일 다시 보내기"; });
   };
   $("redo").onclick = function () { clearTimeout(timer); save("stage", ""); $("formerr").classList.add("hidden"); show("form"); $("email").focus(); };
   document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && load("stage") === "invited") poll(); });

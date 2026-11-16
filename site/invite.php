@@ -20,7 +20,7 @@ if (!is_string($secret) || $secret === '' || !hash_equals(strtoupper($secret), s
 
 // 남용 방지: 초대를 새로 만드는 신청/다시 보내기만 1시간에 20번까지 센다
 // (수락 확인은 15초마다 자동으로 묻기 때문에 세지 않는다)
-if ($action === 'request' || $action === 'resend') {
+if ($action === 'request' || $action === 'resend' || $action === 'tfresend') {
     $log = @include KT_TESTERS;
     if (!is_array($log)) $log = ['hits' => []];
     $log['hits'] = array_values(array_filter($log['hits'] ?? [], fn($t) => $t > time() - 3600));
@@ -78,9 +78,34 @@ try {
         [$c, $js] = kt_asc('GET', '/apps/' . KT_APP_ID);
         kt_json(['state' => $c == 200 ? 'ok' : 'error', 'app' => $js['data']['attributes']['name'] ?? kt_asc_error($js)]);
     }
+    if ($action === 'diag') {
+        $mask = fn($e) => preg_replace('/^(.{2}).*(@.*)$/', '$1***$2', (string)$e);
+        $gid = internal_group();
+        [$c1, $t] = kt_asc('GET', '/betaGroups/' . $gid . '/betaTesters?limit=50');
+        [$c2, $u] = kt_asc('GET', '/users?limit=50');
+        [$c3, $b] = kt_asc('GET', '/betaGroups/' . $gid . '/builds?limit=3');
+        [$c4, $g] = kt_asc('GET', '/betaGroups/' . $gid);
+        kt_json([
+            'group' => $g['data']['attributes'] ?? $c4,
+            'testers' => array_map(fn($x) => [$mask($x['attributes']['email'] ?? ''), $x['attributes']['state'] ?? null, $x['attributes']['inviteType'] ?? null], $t['data'] ?? []),
+            'users' => array_map(fn($x) => [$mask($x['attributes']['username'] ?? ''), $x['attributes']['roles'] ?? null, $x['attributes']['allAppsVisible'] ?? null], $u['data'] ?? []),
+            'builds' => array_map(fn($x) => [$x['attributes']['version'] ?? null, $x['attributes']['processingState'] ?? null, $x['attributes']['expired'] ?? null], $b['data'] ?? []),
+            'errs' => [$c1, $c2, $c3, kt_asc_error($t)],
+        ]);
+    }
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) kt_json(['state' => 'bademail']);
     if (find_user($email)) {
         add_tester($email, $first, $last);
+        if ($action === 'tfresend') {
+            [$c, $js] = kt_asc('GET', '/betaTesters?limit=5&filter[email]=' . rawurlencode($email));
+            $tid = $js['data'][0]['id'] ?? null;
+            if (!$tid) kt_json(['state' => 'error', 'detail' => 'tester missing']);
+            [$c, $js] = kt_asc('POST', '/betaTesterInvitations', ['data' => ['type' => 'betaTesterInvitations', 'relationships' => [
+                'betaTester' => ['data' => ['type' => 'betaTesters', 'id' => $tid]],
+                'app' => ['data' => ['type' => 'apps', 'id' => KT_APP_ID]]]]]);
+            if ($c >= 300) kt_json(['state' => 'error', 'detail' => kt_asc_error($js)]);
+            kt_json(['state' => 'tester', 'sent' => true]);
+        }
         kt_json(['state' => 'tester']);
     }
     $inv = find_invite($email);
