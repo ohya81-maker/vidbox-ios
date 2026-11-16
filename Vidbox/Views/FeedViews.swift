@@ -10,6 +10,10 @@ final class FeedViewModel: ObservableObject {
     @Published private(set) var items: [VideoItem] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    /// 불러오기는 됐는데 비어 있음 (오류가 아니므로 「다시 시도」 없이 안내만)
+    @Published private(set) var isEmptyResult = false
+    /// 비었을 때 보여줄 문구 (화면마다 다르게)
+    var emptyText: String?
     private var continuation: String?
     /// 여러 검색어를 섞은 홈: 검색어마다 다음 페이지 토큰
     private var mixedTokens: [String] = []
@@ -30,6 +34,7 @@ final class FeedViewModel: ObservableObject {
         let id = requestID
         isLoading = true
         errorMessage = nil
+        isEmptyResult = false
         do {
             let page: FeedPage
             switch source {
@@ -40,7 +45,7 @@ final class FeedViewModel: ObservableObject {
             items = page.items
             continuation = page.continuation
             mixedTokens = []
-            if page.items.isEmpty { errorMessage = "표시할 동영상이 없습니다." }
+            if page.items.isEmpty { errorMessage = emptyText ?? "표시할 동영상이 없어요."; isEmptyResult = true }
         } catch {
             guard id == requestID else { return }
             // 취소된 요청은 실패가 아님 — 기존 목록을 그대로 둔다. 목록이 있으면 실패해도 비우지 않는다.
@@ -168,12 +173,13 @@ final class FeedViewModel: ObservableObject {
         let id = requestID
         isLoading = true
         errorMessage = nil
+        isEmptyResult = false
         continuation = nil
         mixedTokens = []
         let list = await fetch()
         guard id == requestID else { return }
         items = list
-        if list.isEmpty { errorMessage = empty }
+        if list.isEmpty { errorMessage = empty; isEmptyResult = true }
         isLoading = false
     }
 
@@ -225,8 +231,10 @@ struct FeedList: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                    Button("다시 시도") { Task { await model.reload() } }
-                        .buttonStyle(.bordered)
+                    if !model.isEmptyResult {
+                        Button("다시 시도") { Task { await model.reload() } }
+                            .buttonStyle(.bordered)
+                    }
                 }
                 .padding(32)
             }
@@ -382,6 +390,8 @@ struct HomeView: View {
 struct BrowseFeedScreen: View {
     let title: String
     let browseID: String
+    /// 비었을 때 문구
+    var empty: String? = nil
     @StateObject private var model = FeedViewModel()
 
     var body: some View {
@@ -395,6 +405,7 @@ struct BrowseFeedScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             model.endless = false
+            model.emptyText = empty
             if !model.hasLoaded { await model.load(source: .browse(browseID)) }
         }
     }

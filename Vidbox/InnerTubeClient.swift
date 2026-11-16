@@ -397,7 +397,7 @@ final class InnerTubeClient {
             guard let dict = value as? [String: Any] else { return }
             var parsed: VideoItem?
             switch key {
-            case "videoRenderer", "compactVideoRenderer", "gridVideoRenderer":
+            case "videoRenderer", "compactVideoRenderer", "gridVideoRenderer", "playlistVideoRenderer":
                 parsed = parseVideoRenderer(dict)
             case "lockupViewModel":
                 parsed = parseLockup(dict)

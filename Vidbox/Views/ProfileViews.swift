@@ -16,7 +16,7 @@ extension View {
             switch route {
             case .library: LibraryView()
             case .history: HistoryScreen()
-            case .youtubeHistory: BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory")
+            case .youtubeHistory: BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory", empty: "YouTube 계정의 시청 기록이 없어요.")
             case .liked: LikedScreen()
             case .comments: MyCommentsScreen()
             case .saved: SavedScreen()
@@ -109,6 +109,7 @@ struct LibraryView: View {
                         }
                     }
                 }
+                .tint(.green)
                 .padding(16)
                 .profileGlass()
 
@@ -331,7 +332,8 @@ struct HistoryScreen: View {
         .toolbar {
             if !library.history.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("모두 지우기") { confirmClear = true }
+                    Button { confirmClear = true } label: { Image(systemName: "trash") }
+                        .accessibilityLabel("모두 지우기")
                 }
             }
         }
@@ -354,7 +356,8 @@ struct LikedScreen: View {
 
     var body: some View {
         if account.isLoggedIn {
-            BrowseFeedScreen(title: "좋아요 표시한 동영상", browseID: "VLLL")
+            BrowseFeedScreen(title: "좋아요 표시한 동영상", browseID: "VLLL",
+                             empty: "좋아요 표시한 동영상이 없어요.\nYouTube에서 👍를 누른 동영상이 여기에 모여요.")
         } else {
             VStack(spacing: 16) {
                 Image(systemName: "hand.thumbsup")
@@ -628,7 +631,8 @@ struct ProfileSheet: View {
             content
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("완료") { dismiss() }
+                        Button { dismiss() } label: { Image(systemName: "xmark") }
+                            .accessibilityLabel("닫기")
                     }
                 }
                 .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
@@ -646,7 +650,7 @@ struct ProfileSheet: View {
         switch route {
         case .library: LibraryView()
         case .history: HistoryScreen()
-        case .youtubeHistory: BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory")
+        case .youtubeHistory: BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory", empty: "YouTube 계정의 시청 기록이 없어요.")
         case .liked: LikedScreen()
         case .comments: MyCommentsScreen()
         case .saved: SavedScreen()

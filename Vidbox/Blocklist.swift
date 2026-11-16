@@ -145,7 +145,8 @@ struct BlockedChannelsSheet: View {
                     .accessibilityLabel("채널 이름으로 차단 추가")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("완료") { dismiss() }
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("닫기")
                 }
             }
             .alert("차단을 해제할까요?", isPresented: Binding(
