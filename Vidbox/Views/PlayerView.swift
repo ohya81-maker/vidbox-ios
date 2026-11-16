@@ -375,6 +375,15 @@ struct PlayerView: View {
                     VideoRow(item: item, expand: true, queue: player.queue)
                         .padding(.horizontal, 14)
                 }
+            } else if isJF {
+                // 내 미디어: 다음에 볼 것을 포스터 격자로
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 104, maximum: 170), spacing: 12, alignment: .top)], spacing: 16) {
+                    ForEach(list) { item in
+                        Button { player.play(item) } label: { UpNextPoster(item: item) }
+                            .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 14)
             } else {
                 // YouTube처럼: 다음 영상은 홈 피드와 같은 큰 카드로, 내릴수록 끝없이
                 LazyVStack(spacing: 18) {

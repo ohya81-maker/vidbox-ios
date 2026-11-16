@@ -344,6 +344,35 @@ struct PosterCard: View {
     }
 }
 
+/// 재생 화면 「다음에 볼 것」의 포스터 (에피소드는 시리즈 포스터 + 회차)
+struct UpNextPoster: View {
+    let item: VideoItem
+    var body: some View {
+        let raw = String(item.id.dropFirst(3))
+        let jf = JellyfinCatalog.shared.item(raw)
+        let s = JellyfinSession.shared
+        let url: URL? = {
+            if let series = jf?.SeriesId { return URL(string: "\(s.server)/Items/\(series)/Images/Primary?fillWidth=360&quality=85") }
+            if let jf { return s.imageURL(jf, width: 360) }
+            return URL(string: "\(s.server)/Items/\(raw)/Images/Primary?fillWidth=360&quality=85")
+        }()
+        VStack(alignment: .leading, spacing: 5) {
+            Color.clear
+                .aspectRatio(2 / 3, contentMode: .fit)
+                .overlay { JFImage(url: url) }
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(alignment: .bottom) { ProgressStrip(progress: jf?.progress) }
+            Text(jf.map { $0.SeriesId != nil ? $0.title : ($0.Name ?? "") } ?? item.title)
+                .font(.caption.weight(.medium)).lineLimit(2)
+                .multilineTextAlignment(.leading)
+            if let year = jf?.ProductionYear, jf?.SeriesId == nil {
+                Text(String(year)).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+}
+
 struct WideCard: View {
     let item: JFItem
     var body: some View {
