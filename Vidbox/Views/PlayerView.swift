@@ -1034,11 +1034,14 @@ struct CommentRow: View {
     @State private var replies: [Comment] = []
     @State private var repliesNext: String?
     @State private var loadingReplies = false
+    @State private var loadedOnce = false
+    /// 눌렀는데 아직 답글을 받는 중 — 받는 대로 자연스럽게 펼친다 (로딩 화면 없이)
+    @State private var pendingExpand = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 10) {
-                AvatarView(url: comment.avatar, size: isReply ? 24 : 32)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                AvatarView(url: comment.avatar, size: isReply ? 26 : 34)
                 VStack(alignment: .leading, spacing: 4) {
                     Text([comment.author, comment.published].compactMap { $0 }.joined(separator: " · "))
                         .font(.caption)
@@ -1046,63 +1049,108 @@ struct CommentRow: View {
                     Text(comment.text)
                         .font(.subheadline)
                         .lineLimit(expanded ? nil : 5)
+                        .fixedSize(horizontal: false, vertical: true)
                         .onTapGesture { expanded.toggle() }
-                    HStack(spacing: 16) {
-                        Label(comment.likes ?? "", systemImage: "hand.thumbsup")
+                    HStack(spacing: 6) {
+                        Image(systemName: "hand.thumbsup")
+                        if let likes = comment.likes { Text(likes) }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.top, 2)
-
-                    // 답글(대댓글): 누르면 바로 아래에 펼쳐진다
-                    if let count = comment.replies, comment.repliesToken != nil {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) { showReplies.toggle() }
-                            if showReplies && replies.isEmpty { Task { await loadReplies(comment.repliesToken) } }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: showReplies ? "chevron.up" : "chevron.down")
-                                Text(showReplies ? "답글 숨기기" : "답글 \(count)개")
-                            }
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.vertical, 4)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    .padding(.top, 4)
                 }
+            }
+
+            // 답글(대댓글): YouTube처럼 댓글 아래 한 칸 띄워서
+            if let count = comment.replies, comment.repliesToken != nil {
+                Button(action: toggleReplies) {
+                    HStack(spacing: 6) {
+                        ZStack {
+                            if pendingExpand {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "chevron.down")
+                                    .rotationEffect(.degrees(showReplies ? 180 : 0))
+                            }
+                        }
+                        .frame(width: 14)
+                        Text("답글 \(count)개")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 36)
+                .padding(.top, 6)
             }
 
             if showReplies {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 16) {
                     ForEach(replies) { r in
                         CommentRow(comment: r, isReply: true)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
                     }
-                    if loadingReplies {
-                        ProgressView().padding(.vertical, 4)
-                    } else if let next = repliesNext {
-                        Button { Task { await loadReplies(next) } } label: {
-                            Label("답글 더보기", systemImage: "arrow.turn.down.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(Color.accentColor)
+                    if let next = repliesNext {
+                        Button { Task { await loadReplies(next, expandAfter: false) } } label: {
+                            HStack(spacing: 6) {
+                                if loadingReplies { ProgressView().controlSize(.mini) }
+                                else { Image(systemName: "arrow.turn.down.right") }
+                                Text("답글 더보기")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
+                        .disabled(loadingReplies)
                     }
                 }
-                .padding(.leading, 42)
+                .padding(.leading, 46)
+                .padding(.top, 8)
+                .clipped()
             }
         }
-        .padding(.vertical, isReply ? 0 : 4)
+        .padding(.vertical, isReply ? 0 : 8)
+        // 화면에 보이면 답글 첫 페이지를 미리 받아 둔다 → 누르면 바로 펼쳐짐
+        .task {
+            if !isReply, comment.repliesToken != nil, !loadedOnce {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await loadReplies(comment.repliesToken, expandAfter: false)
+            }
+        }
     }
 
-    private func loadReplies(_ token: String?) async {
+    private func toggleReplies() {
+        if showReplies {
+            withAnimation(.easeInOut(duration: 0.25)) { showReplies = false }
+        } else if loadedOnce {
+            withAnimation(.easeInOut(duration: 0.3)) { showReplies = true }
+        } else {
+            pendingExpand = true
+            if !loadingReplies { Task { await loadReplies(comment.repliesToken, expandAfter: true) } }
+        }
+    }
+
+    private func loadReplies(_ token: String?, expandAfter: Bool) async {
         guard let token, !loadingReplies else { return }
         loadingReplies = true
-        defer { loadingReplies = false }
-        guard let page = try? await InnerTubeClient.shared.comments(token) else { return }
+        let page = try? await InnerTubeClient.shared.comments(token)
+        loadingReplies = false
+        guard let page else { pendingExpand = false; return }
         let known = Set(replies.map(\.id)).union([comment.id])
-        replies.append(contentsOf: page.comments.filter { !known.contains($0.id) })
-        repliesNext = page.next
+        let fresh = page.comments.filter { !known.contains($0.id) }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            replies.append(contentsOf: fresh)
+            repliesNext = page.next
+            loadedOnce = true
+            if pendingExpand || expandAfter {
+                showReplies = true
+                pendingExpand = false
+            }
+        }
     }
 }
 
