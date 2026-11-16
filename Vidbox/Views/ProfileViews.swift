@@ -6,7 +6,7 @@ import UIKit
 // 홈의 NavigationStack 경로(path)에 값으로 쌓는다 → 뒤로 가기가 한 단계씩 정확히(보관함으로) 돌아온다.
 
 enum ProfileRoute: Hashable {
-    case library, history, youtubeHistory, liked, comments, saved
+    case library, history, youtubeHistory, liked, comments, saved, subscriptions
 }
 
 extension View {
@@ -19,6 +19,7 @@ extension View {
             case .liked: LikedScreen()
             case .comments: MyCommentsScreen()
             case .saved: SavedScreen()
+            case .subscriptions: SubscriptionsScreen()
             }
         }
     }
@@ -58,6 +59,7 @@ struct LibraryView: View {
     @ObservedObject private var comments = CommentLog.shared
     @ObservedObject private var blocklist = Blocklist.shared
     @ObservedObject private var update = AppUpdate.shared
+    @ObservedObject private var subs = SubscriptionStore.shared
     @State private var showLogin = false
     @State private var confirmLogout = false
     @State private var confirmClearHistory = false
@@ -80,6 +82,8 @@ struct LibraryView: View {
                     tile(.comments, "댓글", "text.bubble",
                          comments.items.isEmpty ? "비어 있음" : "\(comments.items.count)개")
                     tile(.saved, "저장", "bookmark", "폴더 \(folderCount)개")
+                    tile(.subscriptions, "구독 채널", "person.2",
+                         subs.channels.isEmpty ? (account.isLoggedIn ? "YouTube 계정" : "비어 있음") : "\(subs.channels.count)개")
                 }
 
                 if !library.history.isEmpty { recentRow }
@@ -510,5 +514,101 @@ final class AppUpdate: ObservableObject {
     /// TestFlight 앱을 연다 (그 안에서 「업데이트」)
     func openTestFlight() {
         if let url = URL(string: "itms-beta://") { UIApplication.shared.open(url) }
+    }
+}
+
+
+// MARK: - 구독 채널 목록
+
+struct SubscriptionsScreen: View {
+    @ObservedObject private var store = SubscriptionStore.shared
+    @EnvironmentObject private var account: AccountStore
+    @EnvironmentObject private var player: PlayerManager
+    @State private var remote: [SubscribedChannel] = []
+    @State private var loading = false
+    @State private var pendingRemove: SubscribedChannel?
+
+    /// 이 기기 구독 + (로그인했으면) YouTube 계정 구독, 겹치는 건 한 번만
+    private var channels: [SubscribedChannel] {
+        var seen = Set<String>()
+        return (store.channels + remote).filter { seen.insert($0.id).inserted }
+    }
+
+    var body: some View {
+        List {
+            if channels.isEmpty && !loading {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("구독한 채널이 없어요").font(.subheadline.weight(.semibold))
+                    Text("영상 아래나 채널 화면의 「구독」을 누르면 여기에 모여요.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+            }
+            ForEach(channels) { ch in
+                HStack(spacing: 12) {
+                    NavigationLink(value: ChannelRoute(id: ch.id, name: ch.name, avatar: ch.avatar)) {
+                        HStack(spacing: 12) {
+                            AvatarView(url: ch.avatar, size: 40)
+                            Text(ch.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                        }
+                    }
+                    Button { pendingRemove = ch } label: {
+                        Text("구독중")
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.primary.opacity(0.08), in: Capsule())
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.primary)
+                }
+            }
+        }
+        .listStyle(.plain)
+        .overlay { if loading && channels.isEmpty { ProgressView() } }
+        .navigationTitle("구독 채널")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .task { await loadRemote() }
+        .refreshable { await loadRemote() }
+        .confirmationDialog("구독을 취소할까요?", isPresented: Binding(
+            get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }
+        ), titleVisibility: .visible, presenting: pendingRemove) { ch in
+            Button("'\(ch.name)' 구독 취소", role: .destructive) {
+                withAnimation {
+                    player.setSubscribed(ch, false)
+                    remote.removeAll { $0.id == ch.id }
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: { ch in
+            Text(account.isLoggedIn ? "'\(ch.name)' 채널의 구독이 YouTube 계정에서도 취소돼요."
+                                    : "'\(ch.name)' 채널의 새 영상이 구독 목록에 더 이상 나오지 않아요.")
+        }
+    }
+
+    /// 로그인했으면 YouTube 계정의 구독 채널 목록(FEchannels)도 가져온다
+    private func loadRemote() async {
+        guard account.isLoggedIn else { return }
+        loading = true
+        defer { loading = false }
+        guard let json = try? await InnerTubeClient.shared.postPublic("browse", body: ["browseId": "FEchannels"]) else { return }
+        var list: [SubscribedChannel] = []
+        var seen = Set<String>()
+        InnerTubeClient.walkJSON(json) { key, value in
+            guard key == "channelRenderer", let d = value as? [String: Any],
+                  let id = d["channelId"] as? String, seen.insert(id).inserted else { return }
+            let name = InnerTubeClient.plainText(d["title"]) ?? ""
+            list.append(SubscribedChannel(id: id, name: name, avatar: Self.avatarURL(d["thumbnail"])))
+        }
+        remote = list
+    }
+
+    private static func avatarURL(_ node: Any?) -> URL? {
+        guard var url = InnerTubeClient.thumbnailURL(node) else { return nil }
+        // 「//yt3...」처럼 앞부분이 빠진 주소 보정
+        if url.scheme == nil, let fixed = URL(string: "https:" + url.absoluteString) { url = fixed }
+        return url
     }
 }
