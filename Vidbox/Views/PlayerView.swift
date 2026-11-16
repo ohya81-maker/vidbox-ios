@@ -91,6 +91,12 @@ struct PlayerView: View {
                             withAnimation(.spring) { dragOffset = 0 }
                         }
                 )
+
+            // 위로 올린 목록이 상단 시계(상태 표시줄) 영역으로 비쳐 보이지 않게 덮는다
+            Color.clear
+                .frame(height: 0)
+                .background(Color(.systemBackground), ignoresSafeAreaEdges: .top)
+                .zIndex(2)
         }
     }
 
