@@ -91,10 +91,19 @@ actor StreamResolver {
     }
 
     /// 백그라운드로 미리 준비. 동시에 너무 많이 요청하지 않도록 4개로 제한.
+    /// 미리 받기는 YouTube에 요청을 많이 보낸다 → 너무 잦으면 「봇이 아님을 확인」 차단을 부른다.
+    /// 20초에 8개까지만, 차단 응답을 받으면 10분간 미리 받기를 멈춘다 (직접 누른 영상은 그대로 재생 시도)
+    private var prefetchTimes: [Date] = []
+    static let blockedUntil = BlockClock()
+
     func prefetch(_ ids: [String]) {
+        if Self.blockedUntil.isBlocked { return }
         for id in ids where !id.hasPrefix("jf:") {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
-            guard inflight[id] == nil, prefetching < 4 else { continue }
+            guard inflight[id] == nil, prefetching < 3 else { continue }
+            prefetchTimes = prefetchTimes.filter { Date().timeIntervalSince($0) < 20 }
+            guard prefetchTimes.count < 8 else { return }
+            prefetchTimes.append(Date())
             prefetching += 1
             Task {
                 _ = try? await self.entry(for: id)
@@ -177,6 +186,7 @@ actor StreamResolver {
               let streaming = json["streamingData"] as? [String: Any]
         else {
             PlaybackDiag.note("player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")")
+            if playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 10) }
             throw AppError.noPlayableStream
         }
 
@@ -928,4 +938,13 @@ enum PlaybackDiag {
         let log = item.errorLog()?.events.suffix(3).map { "\($0.errorStatusCode) \($0.errorDomain) \(URL(string: $0.uri ?? "")?.host ?? "-") \($0.errorComment ?? "")" } ?? []
         return "status=\(item.status.rawValue) err=\(err) log=\(log)"
     }
+}
+
+
+/// YouTube가 「봇이 아님을 확인하세요」로 막았을 때 잠시 미리 받기를 멈추기 위한 시계
+final class BlockClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var until = Date.distantPast
+    var isBlocked: Bool { lock.lock(); defer { lock.unlock() }; return Date() < until }
+    func block(minutes: Double) { lock.lock(); until = Date().addingTimeInterval(minutes * 60); lock.unlock() }
 }
