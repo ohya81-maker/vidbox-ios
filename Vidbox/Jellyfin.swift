@@ -312,7 +312,8 @@ enum JellyfinAPI {
             streams.filter { ($0["Type"] as? String) == type }.compactMap { st in
                 guard let i = st["Index"] as? Int else { return nil }
                 let title = (st["DisplayTitle"] as? String) ?? (st["Language"] as? String) ?? "\(type) \(i)"
-                return JFTrack(index: i, title: title, isText: st["IsTextSubtitleStream"] as? Bool ?? true)
+                return JFTrack(index: i, title: title, isText: st["IsTextSubtitleStream"] as? Bool ?? true,
+                               language: st["Language"] as? String)
             }
         }
         return JFPlaybackChoice(
@@ -436,6 +437,20 @@ final class JellyfinCatalog: @unchecked Sendable {
         lock.unlock()
     }
     /// 이 영상에 자막을 켜기로 했는지 (재생기가 자막 트랙을 골라 켤 때 사용)
+    /// 켜야 할 자막 트랙 (없으면 nil = 자막 끔)
+    func wantedSubtitle(_ id: String) -> JFTrack? {
+        lock.lock(); defer { lock.unlock() }
+        guard let c = choices[String(id.dropFirst(3))] ?? nil, let idx = c.subtitleIndex else { return nil }
+        return c.subtitleTracks.first { $0.index == idx }
+    }
+
+    /// 같은 종류(글자 자막) 안에서 몇 번째인지 — 언어로 못 찾을 때 순서로 고른다
+    func textSubtitlePosition(_ id: String) -> Int? {
+        lock.lock(); defer { lock.unlock() }
+        guard let c = choices[String(id.dropFirst(3))] ?? nil, let idx = c.subtitleIndex else { return nil }
+        return c.subtitleTracks.filter(\.isText).firstIndex { $0.index == idx }
+    }
+
     func wantsSubtitles(_ id: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return (choices[String(id.dropFirst(3))] ?? nil)?.subtitleIndex != nil
@@ -446,6 +461,8 @@ struct JFTrack: Sendable, Hashable, Identifiable {
     var index: Int
     var title: String
     var isText: Bool = true
+    /// 언어 코드 (예: kor, eng)
+    var language: String? = nil
     var id: Int { index }
 }
 

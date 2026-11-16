@@ -139,10 +139,28 @@ struct PlayerView: View {
 
     private func info(_ item: VideoItem) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(item.title)
-                .font(.headline)
-                .lineLimit(showDescription ? nil : 2)
-                .onTapGesture { showDescription.toggle() }
+            HStack(alignment: .top, spacing: 8) {
+                Text(item.title)
+                    .font(.headline)
+                    .lineLimit(showDescription ? nil : 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onTapGesture { showDescription.toggle() }
+                // 내 미디어: 재생 설정(자막·음성·화질)은 제목 줄 끝에
+                if JellyfinCatalog.isJellyfin(item.id) {
+                    Button { showJFSettings = true } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 21))
+                            .frame(width: 36, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("재생 설정")
+                    .sheet(isPresented: $showJFSettings) {
+                        JellyfinPlaybackSettings(videoID: item.id)
+                            .presentationDetents([.medium, .large])
+                    }
+                }
+            }
             let channelName = player.watchInfo?.channelName.isEmpty == false ? player.watchInfo!.channelName : item.channel
             (Text(channelName).foregroundStyle(.primary).fontWeight(.semibold)
              + Text([player.watchInfo?.subscriberText, item.views, item.published]
@@ -153,6 +171,8 @@ struct PlayerView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { if player.watchInfo != nil { showChannel = true } }
             // YouTube처럼 한 줄에: 채널 사진 · 구독 ……… 저장 · 다운로드 · 자동재생 · 공유 (아이콘만)
+            // 내 미디어 영상은 이 줄 없음 (설정은 제목 줄 끝)
+            if !JellyfinCatalog.isJellyfin(item.id) {
             HStack(spacing: 10) {
                 // 채널 사진을 누르면 채널 화면 (내 미디어 영상은 채널이 없어 숨김)
                 if !JellyfinCatalog.isJellyfin(item.id) {
@@ -180,6 +200,7 @@ struct PlayerView: View {
                 iconActions(item)
             }
             .padding(.top, 8)
+            }
         }
         .padding(.horizontal, 14)
         .sheet(isPresented: $showChannel) {
@@ -275,14 +296,7 @@ struct PlayerView: View {
             iconButton("infinity", label: "자동재생", tint: player.autoplay ? .accentColor : nil) {
                 player.autoplay.toggle()
             }
-            // 내 미디어: 자막·음성·화질 설정
-            if isJF {
-                iconButton("gearshape", label: "재생 설정") { showJFSettings = true }
-                    .sheet(isPresented: $showJFSettings) {
-                        JellyfinPlaybackSettings(videoID: item.id)
-                            .presentationDetents([.medium, .large])
-                    }
-            }
+
             if !isJF {
                 ShareLink(item: item.shareURL) {
                     Image(systemName: "square.and.arrow.up")

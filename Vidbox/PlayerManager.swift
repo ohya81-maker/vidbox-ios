@@ -316,13 +316,45 @@ final class PlayerManager: ObservableObject {
         }
     }
 
-    /// Jellyfin이 함께 보낸 자막 트랙을 켠다 (계정 설정에서 자막을 쓰기로 한 경우)
-    private func enableSubtitles(_ item: AVPlayerItem) {
+    /// Jellyfin 자막: 고른 언어의 트랙을 켜고(끄기면 모두 끔), 글자를 크게
+    private func applySubtitles(_ item: AVPlayerItem, videoID: String) {
+        // 자막 글자 크기 (기본 100%)
+        if let rule = AVTextStyleRule(textMarkupAttributes: [kCMTextMarkupAttribute_RelativeFontSize as String: 135]) {
+            item.textStyleRules = [rule]
+        }
+        let wanted = JellyfinCatalog.shared.wantedSubtitle(videoID)
+        let position = JellyfinCatalog.shared.textSubtitlePosition(videoID)
         Task { @MainActor in
             guard let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) else { return }
+            guard let wanted else {
+                item.select(nil, in: group)
+                return
+            }
             let options = group.options.filter { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) }
-            if let option = options.first ?? group.options.first { item.select(option, in: group) }
+            let code = Self.twoLetter(wanted.language)
+            let byLanguage = options.first { opt in
+                let tag = (opt.extendedLanguageTag ?? opt.locale?.identifier ?? "").lowercased()
+                return code != nil && tag.hasPrefix(code!)
+            }
+            let byName = options.first { opt in
+                let name = opt.displayName.lowercased()
+                return name == wanted.title.lowercased() || (wanted.language.map { name.contains($0.lowercased()) } ?? false)
+            }
+            let byPosition = position.flatMap { $0 < options.count ? options[$0] : nil }
+            if let option = byLanguage ?? byName ?? byPosition ?? options.first {
+                item.select(option, in: group)
+            }
         }
+    }
+
+    /// Jellyfin 언어 코드(kor·eng·jpn …) → 두 글자 코드(ko·en·ja …)
+    private static func twoLetter(_ code: String?) -> String? {
+        guard let c = code?.lowercased(), !c.isEmpty else { return nil }
+        if c.count == 2 { return c }
+        let map = ["kor": "ko", "eng": "en", "jpn": "ja", "chi": "zh", "zho": "zh", "spa": "es", "fre": "fr",
+                   "fra": "fr", "ger": "de", "deu": "de", "ita": "it", "por": "pt", "rus": "ru", "tha": "th",
+                   "vie": "vi", "ind": "id", "ara": "ar", "hin": "hi"]
+        return map[c] ?? String(c.prefix(2))
     }
 
     /// 재생 설정(자막·음성·화질)을 바꾼 뒤 같은 위치에서 다시 불러온다
@@ -625,9 +657,8 @@ final class PlayerManager: ObservableObject {
                 switch status {
                 case .readyToPlay:
                     self.isLoading = false
-                    if let id = self.current?.id, JellyfinCatalog.isJellyfin(id),
-                       JellyfinCatalog.shared.wantsSubtitles(id) {
-                        self.enableSubtitles(observed)
+                    if let id = self.current?.id, JellyfinCatalog.isJellyfin(id) {
+                        self.applySubtitles(observed, videoID: id)
                     }
                     self.duration = seconds.isFinite ? seconds : 0
                     self.updateNowPlaying()
