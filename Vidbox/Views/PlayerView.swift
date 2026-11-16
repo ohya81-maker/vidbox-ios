@@ -23,7 +23,7 @@ struct PlayerView: View {
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
         GeometryReader { geo in
-            let landscape = geo.size.width > geo.size.height
+            let landscape = geo.size.width > geo.size.height && UIDevice.current.userInterfaceIdiom == .phone
             Group {
                 if (player.isFullscreen || landscape) && !player.audioOnly {
                     PlayerStage(fullscreen: true)
@@ -586,10 +586,13 @@ struct PlayerStage: View {
                         }
                         .accessibilityLabel(player.captionsOn ? "자막 끄기" : "자막 켜기")
                     }
-                    Button { player.setAudioOnly(!player.audioOnly) } label: {
-                        Image(systemName: player.audioOnly ? "headphones.circle.fill" : "headphones")
-                            .font(.system(size: 16, weight: .medium))
-                            .plainIcon(size: 38)
+                    // 오디오 전용 버튼은 없앴다 (음악 탭에서 쓰다 넘어온 경우에만 끌 수 있게 남김)
+                    if player.audioOnly {
+                        Button { player.setAudioOnly(false) } label: {
+                            Image(systemName: "headphones.circle.fill")
+                                .font(.system(size: 16, weight: .medium))
+                                .plainIcon(size: 38)
+                        }
                     }
                     Button { player.stop() } label: {
                         Image(systemName: "xmark")

@@ -545,6 +545,8 @@ final class PlayerManager: ObservableObject {
 
     /// 사용자가 폰을 직접 돌렸을 때 (가로 = 전체화면, 세로 = 일반)
     func deviceRotated(landscape: Bool) {
+        // 아이패드는 가로여도 큰 화면이라 목록과 함께 보여 준다 (전체화면 버튼으로만 전체화면)
+        if UIDevice.current.userInterfaceIdiom == .pad { return }
         if isFullscreen != landscape { isFullscreen = landscape }
     }
 
@@ -931,7 +933,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        AppDelegate.orientationLock
+        // 아이패드는 키보드에 끼워 가로로 쓰는 일이 많다 → 늘 모든 방향
+        UIDevice.current.userInterfaceIdiom == .pad ? .all : AppDelegate.orientationLock
     }
 }
 
@@ -939,6 +942,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 enum OrientationController {
     /// 회전 허용 여부. 허용하지 않으면 세로로 되돌린다.
     static func allowRotation(_ allow: Bool) {
+        if UIDevice.current.userInterfaceIdiom == .pad { return }
         AppDelegate.orientationLock = allow ? .allButUpsideDown : .portrait
         refresh()
         if !allow { request(.portrait) }

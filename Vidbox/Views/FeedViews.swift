@@ -187,14 +187,34 @@ final class FeedViewModel: ObservableObject {
 struct FeedList: View {
     @ObservedObject var model: FeedViewModel
     var limit: Int? = nil
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
-        LazyVStack(spacing: 0) {
-            let shown = limit.map { Array(model.items.prefix($0)) } ?? model.items
-            ForEach(shown) { item in
-                VideoCard(item: item)
-                    .task { if limit == nil { await model.loadMoreIfNeeded(current: item) } }
+        // 아이패드처럼 넓은 화면은 YouTube처럼 여러 줄 격자로
+        if sizeClass == .regular {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16, alignment: .top)], spacing: 8) {
+                cards
             }
+            .padding(.horizontal, 16)
+            footer
+        } else {
+            LazyVStack(spacing: 0) {
+                cards
+                footer
+            }
+        }
+    }
+
+    @ViewBuilder private var cards: some View {
+        let shown = limit.map { Array(model.items.prefix($0)) } ?? model.items
+        ForEach(shown) { item in
+            VideoCard(item: item)
+                .task { if limit == nil { await model.loadMoreIfNeeded(current: item) } }
+        }
+    }
+
+    @ViewBuilder private var footer: some View {
+        Group {
             if model.isLoading {
                 ProgressView().padding(24)
             } else if let message = model.errorMessage {
