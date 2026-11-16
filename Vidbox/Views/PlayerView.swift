@@ -12,6 +12,7 @@ struct PlayerView: View {
     @State private var showDownload = false
     @State private var relatedFilter = 0
     @State private var showComments = false
+    @State private var showChannel = false
     /// 댓글 창을 위로 쓸어 올려 화면 전체로 키운 상태
     @State private var commentsFull = false
     @State private var commentsDrag: CGFloat = 0
@@ -148,9 +149,15 @@ struct PlayerView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+                .contentShape(Rectangle())
+                .onTapGesture { if player.watchInfo != nil { showChannel = true } }
             // YouTube처럼 한 줄에: 채널 사진 · 구독 ……… 저장 · 다운로드 · 자동재생 · 공유 (아이콘만)
             HStack(spacing: 10) {
-                AvatarView(url: player.watchInfo?.channelAvatar ?? item.channelThumbnail, size: 36)
+                // 채널 사진을 누르면 채널 화면
+                Button { if player.watchInfo != nil { showChannel = true } } label: {
+                    AvatarView(url: player.watchInfo?.channelAvatar ?? item.channelThumbnail, size: 36)
+                }
+                .buttonStyle(.plain)
                 if player.watchInfo != nil {
                     let on = player.isSubscribedToCurrent
                     Button {
@@ -172,6 +179,11 @@ struct PlayerView: View {
             .padding(.top, 8)
         }
         .padding(.horizontal, 14)
+        .sheet(isPresented: $showChannel) {
+            if let info = player.watchInfo {
+                ChannelView(channelID: info.channelID, fallbackName: info.channelName, fallbackAvatar: info.channelAvatar)
+            }
+        }
     }
 
     /// YouTube처럼 「댓글 1.2만」 + 첫 댓글 한 줄. 누르면 전체 댓글 창

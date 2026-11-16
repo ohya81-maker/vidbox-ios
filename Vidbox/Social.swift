@@ -33,6 +33,16 @@ struct CommentPage {
     var createParams: String? = nil
 }
 
+struct ChannelPage {
+    var name: String
+    var handle: String?
+    var avatar: URL?
+    var banner: URL?
+    var subscriberText: String?
+    var videoCountText: String?
+    var videos: FeedPage
+}
+
 struct SubscribedChannel: Codable, Identifiable, Hashable {
     let id: String
     var name: String
@@ -192,6 +202,36 @@ extension InnerTubeClient {
             if createParams == nil, k == "createCommentParams", let p = v as? String { createParams = p }
         }
         return CommentPage(comments: ordered, next: next, countText: countText, createParams: createParams)
+    }
+
+    /// 채널 화면: 머리말(배너·사진·이름·구독자) + 동영상 탭 첫 페이지
+    func channel(_ channelID: String) async throws -> ChannelPage {
+        let json = try await postPublic("browse", body: ["browseId": channelID, "params": "EgZ2aWRlb3PyBgQKAjoA"])
+        var page = ChannelPage(name: "", videos: Self.parsePage(json))
+        Self.walkJSON(json) { key, value in
+            guard key == "pageHeaderViewModel", page.name.isEmpty, let d = value as? [String: Any] else { return }
+            page.name = Self.digJSON(d, "title", "dynamicTextViewModel", "text", "content") as? String ?? ""
+            let avatars = Self.digJSON(d, "image", "decoratedAvatarViewModel", "avatar", "avatarViewModel", "image", "sources") as? [[String: Any]]
+            page.avatar = (avatars?.last?["url"] as? String).flatMap(URL.init(string:))
+            let banners = Self.digJSON(d, "banner", "imageBannerViewModel", "image", "sources") as? [[String: Any]]
+            page.banner = (banners?.last?["url"] as? String).flatMap(URL.init(string:))
+            let rows = Self.digJSON(d, "metadata", "contentMetadataViewModel", "metadataRows") as? [[String: Any]] ?? []
+            for row in rows {
+                for part in row["metadataParts"] as? [[String: Any]] ?? [] {
+                    guard let text = Self.digJSON(part, "text", "content") as? String else { continue }
+                    if text.hasPrefix("@") { page.handle = text }
+                    else if text.contains("구독자") || text.lowercased().contains("subscriber") { page.subscriberText = text }
+                    else if text.contains("동영상") || text.lowercased().contains("video") { page.videoCountText = text }
+                }
+            }
+        }
+        page.videos.items = page.videos.items.map { v in
+            var v = v
+            if v.channel.isEmpty { v.channel = page.name }
+            if v.channelThumbnail == nil { v.channelThumbnail = page.avatar }
+            return v
+        }
+        return page
     }
 
     /// 채널의 「동영상」 탭 (최신순)

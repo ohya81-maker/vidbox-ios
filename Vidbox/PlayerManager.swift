@@ -258,14 +258,25 @@ final class PlayerManager: ObservableObject {
     }
 
     func toggleSubscribe() {
-        guard var info = watchInfo else { return }
-        let on = !isSubscribedToCurrent
+        guard let info = watchInfo else { return }
         let channel = SubscribedChannel(id: info.channelID, name: info.channelName, avatar: info.channelAvatar)
+        setSubscribed(channel, !isSubscribedToCurrent)
+    }
+
+    /// 아무 채널이나 구독/취소 (채널 화면에서도 사용). 지금 영상의 채널이면 재생 화면 버튼도 같이 바뀐다
+    func isSubscribed(_ channelID: String) -> Bool {
+        if let info = watchInfo, info.channelID == channelID, let on = info.subscribed { return on }
+        return SubscriptionStore.shared.isSubscribed(channelID)
+    }
+
+    func setSubscribed(_ channel: SubscribedChannel, _ on: Bool) {
         SubscriptionStore.shared.set(channel, subscribed: on)
-        if info.subscribed != nil {
+        if AuthStore.shared.isLoggedIn {
+            Task { try? await InnerTubeClient.shared.setSubscribed(channel.id, on) }
+        }
+        if var info = watchInfo, info.channelID == channel.id, info.subscribed != nil {
             info.subscribed = on
             watchInfo = info
-            Task { try? await InnerTubeClient.shared.setSubscribed(channel.id, on) }
         } else {
             objectWillChange.send()
         }
