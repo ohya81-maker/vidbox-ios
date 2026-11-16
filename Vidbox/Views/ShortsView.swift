@@ -93,6 +93,7 @@ final class ShortsPlayer: ObservableObject {
         init(id: String) {
             self.id = id
             player.automaticallyWaitsToMinimizeStalling = true
+            player.appliesMediaSelectionCriteriaAutomatically = false   // 자막 자동 표시 끔
             player.isMuted = true
             player.actionAtItemEnd = .none
         }

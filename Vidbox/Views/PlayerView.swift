@@ -577,6 +577,15 @@ struct PlayerStage: View {
                             .plainIcon(size: 38)
                     }
                     Spacer()
+                    // YouTube 자막(CC) 켜기/끄기 — 자막이 있는 영상에서만
+                    if player.hasCaptions {
+                        Button { player.captionsOn.toggle(); scheduleHide() } label: {
+                            Image(systemName: player.captionsOn ? "captions.bubble.fill" : "captions.bubble")
+                                .font(.system(size: 16, weight: .medium))
+                                .plainIcon(size: 38)
+                        }
+                        .accessibilityLabel(player.captionsOn ? "자막 끄기" : "자막 켜기")
+                    }
                     Button { player.setAudioOnly(!player.audioOnly) } label: {
                         Image(systemName: player.audioOnly ? "headphones.circle.fill" : "headphones")
                             .font(.system(size: 16, weight: .medium))

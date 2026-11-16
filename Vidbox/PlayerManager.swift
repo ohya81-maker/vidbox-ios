@@ -27,6 +27,17 @@ final class PlayerManager: ObservableObject {
     /// 재생 위치는 0.5초마다 바뀌므로 따로 둔다 — 여기(PlayerManager)에 두면 이것을 지켜보는
     /// 모든 화면(탭 전체, 영상 카드들)이 0.5초마다 다시 그려져 스크롤·버튼이 버벅인다
     let clock = PlaybackClock()
+    /// YouTube 자막(CC). 기본은 꺼짐 — 영상에 이미 박힌 자막과 겹치지 않게 (재생 화면 CC 버튼으로 켬)
+    @Published var captionsOn: Bool = UserDefaults.standard.bool(forKey: "captionsOn") {
+        didSet {
+            UserDefaults.standard.set(captionsOn, forKey: "captionsOn")
+            if let item = player.currentItem, let id = current?.id, !JellyfinCatalog.isJellyfin(id) {
+                applyCaptions(item)
+            }
+        }
+    }
+    /// 지금 영상에 YouTube 자막이 있는지 (CC 버튼 표시용)
+    @Published private(set) var hasCaptions = false
     /// 내 미디어(Jellyfin) 글자 자막 (앱이 직접 그림)
     let subtitles = SubtitleClock()
     private var subtitleObserver: Any?
@@ -172,6 +183,8 @@ final class PlayerManager: ObservableObject {
         }
         // 주의: false로 두면 HLS가 '재생 중' 상태로 0초에 멈춘다 (CI에서 확인). 기본값(true) 유지.
         player.automaticallyWaitsToMinimizeStalling = true
+        // 자막은 앱이 정한다 (아이폰 손쉬운 사용 자막 설정 때문에 자동으로 켜져 영상 속 자막과 겹치지 않게)
+        player.appliesMediaSelectionCriteriaAutomatically = false
         configureAudioSession()
         configureRemoteCommands()
         observePlayer()
@@ -202,6 +215,7 @@ final class PlayerManager: ObservableObject {
 
         loadTask?.cancel()
         stopSubtitles()
+        hasCaptions = false
         current = item
         if audioOnly { MusicTaste.record(item) }
         if newQueue != nil || !continuingQueue { rebuildOrder() }
@@ -337,6 +351,24 @@ final class PlayerManager: ObservableObject {
             guard let self, self.current?.id == videoID else { return }
             self.subtitles.reset(cues)
             self.startSubtitleTimer()
+        }
+    }
+
+    /// YouTube 자막: 꺼져 있으면 끄고, 켜져 있으면 한국어(없으면 첫 번째)를 켠다
+    private func applyCaptions(_ item: AVPlayerItem) {
+        Task { @MainActor in
+            guard let group = try? await item.asset.loadMediaSelectionGroup(for: .legible) else {
+                hasCaptions = false
+                return
+            }
+            let options = group.options.filter { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) }
+            hasCaptions = !options.isEmpty
+            if captionsOn, !options.isEmpty {
+                let korean = options.first { ($0.extendedLanguageTag ?? $0.locale?.identifier ?? "").lowercased().hasPrefix("ko") }
+                item.select(korean ?? options.first, in: group)
+            } else {
+                item.select(nil, in: group)
+            }
         }
     }
 
@@ -678,6 +710,8 @@ final class PlayerManager: ObservableObject {
                     self.isLoading = false
                     if let id = self.current?.id, JellyfinCatalog.isJellyfin(id) {
                         self.applySubtitles(observed, videoID: id)
+                    } else {
+                        self.applyCaptions(observed)
                     }
                     self.duration = seconds.isFinite ? seconds : 0
                     self.updateNowPlaying()
