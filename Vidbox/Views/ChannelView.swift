@@ -13,7 +13,6 @@ struct ChannelView: View {
     @State private var next: String?
     @State private var loading = false
     @State private var failed = false
-    @State private var openedWith: String?
 
     var body: some View {
         NavigationStack {
@@ -22,7 +21,11 @@ struct ChannelView: View {
                     header
                     LazyVStack(spacing: 18) {
                         ForEach(videos) { item in
-                            VideoCard(item: item)
+                            // 채널 화면을 먼저 닫고 재생 (홈에서 연 경우에도 재생 화면이 정상으로 뜨게)
+                            VideoCard(item: item, onPlay: { picked in
+                                dismiss()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { player.play(picked) }
+                            })
                                 .onAppear { if item.id == videos.last?.id { Task { await loadMore() } } }
                         }
                         if loading {
@@ -45,12 +48,7 @@ struct ChannelView: View {
             }
         }
         .task {
-            openedWith = player.current?.id
             if page == nil { await load() }
-        }
-        // 채널에서 영상을 고르면 채널 화면을 닫고 그 영상을 본다
-        .onChange(of: player.current?.id) { _, id in
-            if id != openedWith { dismiss() }
         }
     }
 

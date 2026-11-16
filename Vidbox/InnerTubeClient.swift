@@ -579,6 +579,16 @@ final class InnerTubeClient {
         return found
     }
 
+    /// 영상 정보 안에서 채널 ID(UC…)를 찾는다 (채널 이름·사진의 링크)
+    private static func channelID(in node: Any?) -> String? {
+        guard let node else { return nil }
+        var found: String?
+        walk(node) { key, value in
+            if found == nil, key == "browseId", let id = value as? String, id.hasPrefix("UC") { found = id }
+        }
+        return found
+    }
+
     private static func parseVideoRenderer(_ d: [String: Any]) -> VideoItem? {
         guard let id = d["videoId"] as? String else { return nil }
         let channelThumb = lastThumbnail(dig(d, "channelThumbnailSupportedRenderers", "channelThumbnailWithLinkRenderer", "thumbnail"))
@@ -593,7 +603,9 @@ final class InnerTubeClient {
             duration: text(d["lengthText"]),
             views: text(d["shortViewCountText"]) ?? text(d["viewCountText"]),
             published: text(d["publishedTimeText"]),
-            isLive: isLive && d["lengthText"] == nil
+            isLive: isLive && d["lengthText"] == nil,
+            channelID: channelID(in: d["ownerText"]) ?? channelID(in: d["longBylineText"])
+                ?? channelID(in: d["shortBylineText"]) ?? channelID(in: d["channelThumbnailSupportedRenderers"])
         )
     }
 
@@ -628,7 +640,8 @@ final class InnerTubeClient {
             duration: duration,
             views: secondRow.first,
             published: secondRow.count > 1 ? secondRow[1] : nil,
-            isLive: (duration ?? "").contains("실시간") || (duration ?? "").uppercased().contains("LIVE")
+            isLive: (duration ?? "").contains("실시간") || (duration ?? "").uppercased().contains("LIVE"),
+            channelID: channelID(in: meta)
         )
     }
 }

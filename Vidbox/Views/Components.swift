@@ -88,39 +88,62 @@ struct AvatarView: View {
 
 struct VideoCard: View {
     let item: VideoItem
+    /// 누르면 할 일 (기본: 재생). 채널 화면처럼 먼저 닫고 재생해야 할 때 바꿔 쓴다
+    var onPlay: ((VideoItem) -> Void)? = nil
     /// 재생기를 "지켜보지" 않는다 — 재생 상태가 바뀔 때마다 피드의 카드가 전부 다시 그려지지 않도록
     private var player: PlayerManager { PlayerManager.shared }
+    @State private var showChannel = false
+
+    private func play() {
+        if let onPlay { onPlay(item) } else { player.play(item) }
+    }
 
     var body: some View {
-        Button {
-            player.play(item)
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: play) {
                 ThumbnailView(url: item.bestThumbnail, duration: item.duration, isLive: item.isLive)
-                HStack(alignment: .top, spacing: 12) {
-                    AvatarView(url: item.channelThumbnail)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                        Text(item.metaLine)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    Spacer(minLength: 0)
-                    VideoMenu(item: item)
-                }
-                .padding(.horizontal, 12)
+                    .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            HStack(alignment: .top, spacing: 12) {
+                // 채널 사진: 누르면 채널 화면
+                Button {
+                    if item.channelID != nil { showChannel = true } else { play() }
+                } label: {
+                    AvatarView(url: item.channelThumbnail)
+                }
+                .buttonStyle(.plain)
+                Button(action: play) {
+                    HStack(alignment: .top, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.title)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Text(item.metaLine)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                VideoMenu(item: item)
+            }
+            .padding(.horizontal, 12)
         }
-        .buttonStyle(.plain)
         .padding(.bottom, 18)
         // 화면에 보이는 영상은 재생 주소를 미리 받아 둬서 누르면 바로 시작
         .onAppear { Task { await StreamResolver.shared.prefetch([item.id]) } }
+        .sheet(isPresented: $showChannel) {
+            if let id = item.channelID {
+                ChannelView(channelID: id, fallbackName: item.channel, fallbackAvatar: item.channelThumbnail)
+                    .environmentObject(PlayerManager.shared)
+            }
+        }
     }
 }
 

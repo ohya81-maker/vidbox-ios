@@ -10,6 +10,8 @@ struct VideoItem: Identifiable, Hashable, Codable {
     var views: String?
     var published: String?
     var isLive: Bool
+    /// 채널 ID (UC...) — 채널 사진을 누르면 채널 화면으로
+    var channelID: String? = nil
 
     var bestThumbnail: URL {
         thumbnail ?? URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg")!
