@@ -77,6 +77,11 @@ struct RootView: View {
 
     /// 자동 화면 점검용 실행 인자 (CI 시뮬레이터 스크린샷): -ktubeTab music / -ktubePlay <id> / -ktubeSeek 100
     private func runLaunchHooks() async {
+        // 입력칸 밖을 누르면 키보드(작성 화면) 닫기
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            KeyboardDismisser.shared.install()
+        }
         let defaults = UserDefaults.standard
         // 음악 탭 목록을 미리 불러 둔다 (홈 로딩과 겹치지 않게 조금 뒤에)
         Task {
