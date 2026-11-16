@@ -36,7 +36,14 @@ struct PlayerView: View {
                 } else {
                     // 채널 사진·이름을 누르면 YouTube처럼 채널 화면이 옆에서 밀려 들어온다 (뒤로 오면 그대로 재생 화면)
                     NavigationStack(path: $navPath) {
-                        portrait(width: geo.size.width)
+                        Group {
+                            // 아이패드 가로(넓은 화면): YouTube처럼 왼쪽 약 2/3에 영상·정보·댓글, 오른쪽에 다음 영상
+                            if UIDevice.current.userInterfaceIdiom == .pad && geo.size.width >= 900 {
+                                wide(size: geo.size)
+                            } else {
+                                portrait(width: geo.size.width)
+                            }
+                        }
                             .toolbar(.hidden, for: .navigationBar)
                             .channelDestination()
                     }
@@ -141,6 +148,69 @@ struct PlayerView: View {
                 .background(Color(.systemBackground), ignoresSafeAreaEdges: .top)
                 .zIndex(2)
         }
+    }
+
+    private var dismissDrag: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .global)
+            .onChanged { value in
+                if value.translation.height > 0 && abs(value.translation.height) > abs(value.translation.width) {
+                    dragOffset = value.translation.height
+                }
+            }
+            .onEnded { value in
+                if value.translation.height > 120 { player.isExpanded = false }
+                withAnimation(.spring) { dragOffset = 0 }
+            }
+    }
+
+    private func wide(size: CGSize) -> some View {
+        let side: CGFloat = 24, gap: CGFloat = 20
+        let leftWidth = ((size.width - side * 2 - gap) * 0.66).rounded()
+        let aspect = player.audioOnly ? 16 / 9 : min(16 / 9, max(player.videoAspect, 0.65))
+        let stageHeight = min(leftWidth / aspect, size.height * 0.64)
+        return HStack(alignment: .top, spacing: gap) {
+            VStack(alignment: .leading, spacing: 0) {
+                PlayerStage(fullscreen: false, height: stageHeight, expanded: true)
+                    .frame(width: leftWidth, height: stageHeight)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .simultaneousGesture(dismissDrag)
+                if let item = player.current {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            info(item)
+                            commentsCard
+                        }
+                        .padding(.top, 12)
+                        .padding(.bottom, 24)
+                    }
+                    .scrollIndicators(.hidden)
+                }
+            }
+            .frame(width: leftWidth)
+
+            ZStack(alignment: .top) {
+                ScrollView {
+                    upNext.padding(.bottom, 24)
+                }
+                .scrollIndicators(.hidden)
+                // 댓글은 YouTube 아이패드처럼 오른쪽 칸에 (영상은 왼쪽에서 계속 재생)
+                if showComments, let page = player.commentsPreview {
+                    CommentsPanel(first: page, onClose: {
+                        withAnimation(.easeInOut(duration: 0.25)) { showComments = false; commentsFull = false }
+                    }, onDrag: { _ in }, onDragEnd: { dy in
+                        if dy > 60 { withAnimation(.easeInOut(duration: 0.25)) { showComments = false; commentsFull = false } }
+                    })
+                    .id(player.current?.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+                    .transition(.move(edge: .trailing))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(.horizontal, side)
+        .padding(.top, 8)
     }
 
     private func info(_ item: VideoItem) -> some View {

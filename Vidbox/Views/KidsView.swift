@@ -2,6 +2,7 @@ import SwiftUI
 
 /// YouTube Kids 스타일 화면: 어린이용 API(youtubekids.com)의 콘텐츠만 보여준다.
 struct KidsView: View {
+    @Environment(\.horizontalSizeClass) private var sizeClass
     typealias Age = InnerTubeClient.KidsAge
 
     private struct Category: Identifiable {
@@ -183,7 +184,9 @@ struct KidsView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 50)
             } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 18) {
+                LazyVGrid(columns: sizeClass == .regular
+                          ? [GridItem(.adaptive(minimum: 260), spacing: 18, alignment: .top)]
+                          : [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)], spacing: 18) {
                     ForEach(items) { item in
                         Button {
                             // 다음 영상도 어린이 목록 안에서만 이어지도록 목록을 재생목록으로 넘긴다
@@ -195,7 +198,7 @@ struct KidsView: View {
                                     .shadow(color: .black.opacity(0.12), radius: 6, y: 4)
                                 Text(item.title)
                                     .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                    .lineLimit(2)
+                                    .lineLimit(2, reservesSpace: true)
                                     .multilineTextAlignment(.leading)
                                     .foregroundStyle(.primary)
                             }

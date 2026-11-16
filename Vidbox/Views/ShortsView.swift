@@ -510,7 +510,9 @@ struct ShortPage: View {
             // 가로는 화면 폭 그대로, 세로 영상 비율(9:16)에 맞춰 높이를 정한다
             // 하단 탭바(약 64pt)에 가리지 않게 빼고, 9:16 비율로 잘림 없이 맞춘다
             let usable = geo.size.height - topInset - bottomInset - 64
-            let boxHeight = min(geo.size.width * 16 / 9, geo.size.height * 0.8, usable)
+            // 아이패드: YouTube처럼 위아래를 꽉 채운 세로 영상
+            let boxHeight = UIDevice.current.userInterfaceIdiom == .pad
+                ? usable : min(geo.size.width * 16 / 9, geo.size.height * 0.8, usable)
             let boxWidth = min(geo.size.width, boxHeight * 9 / 16)
             ZStack(alignment: .top) {
                 Color.black

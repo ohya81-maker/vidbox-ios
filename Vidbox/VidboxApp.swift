@@ -27,39 +27,43 @@ struct RootView: View {
     @State private var tab: AppTab = .home
     @ObservedObject private var search = SearchRouter.shared
     @State private var showDownloadsTest = false
+    /// 실제 화면 폭 구분 (아이패드 = regular). 탭바만 아래에 두려고 TabView에는 compact를 주고, 화면 내용에는 이 값을 돌려준다
+    @Environment(\.horizontalSizeClass) private var realSizeClass
 
     var body: some View {
         TabView(selection: $tab) {
             Tab(value: AppTab.home) {
-                HomeView().miniPlayerInset()
+                HomeView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("홈") } icon: { Image(uiImage: UIImage(systemName: tab == .home ? "house.fill" : "house")!) }
             }
             Tab(value: AppTab.shorts) {
-                ShortsView(isActive: tab == .shorts)
+                ShortsView(isActive: tab == .shorts).environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("Shorts") } icon: { Image(uiImage: UIImage(systemName: tab == .shorts ? "play.rectangle.on.rectangle.fill" : "play.rectangle.on.rectangle")!) }
             }
             Tab(value: AppTab.music) {
-                MusicView().miniPlayerInset()
+                MusicView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("음악") } icon: { Image(uiImage: UIImage(systemName: tab == .music ? "headphones.circle.fill" : "headphones.circle")!) }
             }
             Tab(value: AppTab.kids) {
-                KidsView().miniPlayerInset()
+                KidsView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("KIDS") } icon: { Image(uiImage: UIImage(systemName: tab == .kids ? "face.smiling.inverse" : "face.smiling")!) }
             }
             Tab(value: AppTab.media) {
-                MediaView().miniPlayerInset()
+                MediaView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 Label { Text("미디어") } icon: { Image(uiImage: UIImage(systemName: tab == .media ? "play.tv.fill" : "play.tv")!) }
             }
         }
+        // 아이패드에서도 YouTube처럼 탭바를 화면 아래에 (기본은 위쪽 떠 있는 탭바)
+        .environment(\.horizontalSizeClass, .compact)
         // 검색은 하단 탭이 아니라 홈·쇼츠 위의 검색창에서 (하단에는 홈·쇼츠·음악·KIDS·미디어 다섯 개만).
         // 화면 전체를 덮는 겹침으로 띄운다 — 검색 결과에서 영상을 열면 재생 화면이 그 위에 정상으로 뜬다
         .overlay {
@@ -156,6 +160,15 @@ private struct HideTabBarOnScroll: ViewModifier {
     @State private var hidden = false
 
     func body(content: Content) -> some View {
+        // 아이패드는 숨기지 않는다 (탭바를 숨겼다 보였다 하면 목록이 위아래로 흔들린다)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            content
+        } else {
+            phone(content)
+        }
+    }
+
+    private func phone(_ content: Content) -> some View {
         content
             .onScrollGeometryChange(for: CGFloat.self) { geo in
                 geo.contentOffset.y + geo.contentInsets.top
