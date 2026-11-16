@@ -33,6 +33,8 @@ struct PlayerView: View {
             }
         }
         .background(player.isFullscreen ? Color.black : Color(.systemBackground))
+        // 아래로 끌면 영상만이 아니라 재생 화면 전체가 같이 내려간다 (YouTube처럼)
+        .offset(y: dragOffset)
         .sheet(isPresented: $showSave) {
             if let item = player.current { SaveToFolderSheet(item: item) }
         }
@@ -43,9 +45,9 @@ struct PlayerView: View {
             PlayerStage(fullscreen: false)
                 // 아래 목록과 높이를 반씩 나누지 않고, 영상 비율만큼의 높이를 먼저 차지한다
                 .layoutPriority(1)
-                .offset(y: dragOffset)
+                .zIndex(1)
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: 20)
+                    DragGesture(minimumDistance: 20, coordinateSpace: .global)
                         .onChanged { value in
                             if value.translation.height > 0 && abs(value.translation.height) > abs(value.translation.width) {
                                 dragOffset = value.translation.height
@@ -163,10 +165,19 @@ struct PlayerView: View {
             if list.isEmpty {
                 ProgressView().frame(maxWidth: .infinity).padding()
             }
-            ForEach(list) { item in
-                VideoRow(item: item, expand: true, queue: player.isQueueMode ? player.queue : nil)
-                    .padding(.horizontal, 14)
-                    .onAppear { if !player.isQueueMode { player.loadMoreRelatedIfNeeded(current: item) } }
+            if player.isQueueMode {
+                ForEach(list) { item in
+                    VideoRow(item: item, expand: true, queue: player.queue)
+                        .padding(.horizontal, 14)
+                }
+            } else {
+                // YouTube처럼: 다음 영상은 홈 피드와 같은 큰 카드로, 내릴수록 끝없이
+                LazyVStack(spacing: 18) {
+                    ForEach(list) { item in
+                        VideoCard(item: item)
+                            .onAppear { player.loadMoreRelatedIfNeeded(current: item) }
+                    }
+                }
             }
         }
     }
@@ -186,7 +197,6 @@ struct PlayerStage: View {
     @State private var seekAmount = 0
     @State private var seekForward = true
     @State private var seekTask: Task<Void, Never>?
-    @State private var showDiagnostics = UserDefaults.standard.bool(forKey: "ktubeDiag")
 
     /// 재생 화면 비율: 가로 영상은 16:9, 세로 영상(직캠 등)은 YouTube처럼 더 길게 — 최대 2:3 (세로가 가로의 1.5배)
     private var stageAspect: CGFloat {
@@ -232,25 +242,7 @@ struct PlayerStage: View {
                 controls.transition(.opacity)
             }
 
-            // 길게 누르면 진단 정보 (재생 문제를 알려줄 때 캡처용)
-            if showDiagnostics {
-                VStack {
-                    HStack {
-                        Text(player.diagnostics + "\n(t=\(String(format: "%.1f", player.currentTime)))")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .padding(8)
-                            .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
-                        Spacer()
-                    }
-                    Spacer()
-                }
-                .padding(.top, 52)
-                .padding(.horizontal, 10)
-                .allowsHitTesting(false)
-            }
         }
-        .onLongPressGesture(minimumDuration: 0.8) { showDiagnostics.toggle() }
         .stageFrame(fullscreen, aspect: stageAspect)
         .clipped()
         .environment(\.colorScheme, .dark)
