@@ -496,7 +496,11 @@ final class AppUpdate: ObservableObject {
     @Published private(set) var latestBuild = 0
     private var lastCheck = Date.distantPast
 
-    var available: Bool { Self.currentBuild > 0 && latestBuild > Self.currentBuild }
+    /// 버전 문자열(1.17.0)로 비교한다 — TestFlight 빌드 번호와 설치 페이지 IPA의 빌드 번호는 서로 달라 비교할 수 없다
+    var available: Bool {
+        guard let latest = latestVersion, Self.currentVersion != "?" else { return false }
+        return latest.compare(Self.currentVersion, options: .numeric) == .orderedDescending
+    }
 
     func check(force: Bool = false) async {
         guard force || Date().timeIntervalSince(lastCheck) > 600 else { return }
