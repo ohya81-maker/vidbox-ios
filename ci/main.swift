@@ -43,6 +43,46 @@ func measure(_ label: String, _ item: AVPlayerItem) async throws {
     player.pause()
 }
 
+// 쇼츠 시작 시간 측정 (PLAYTEST_SHORTS="id1,id2,..."): 주소 받기 시간 + 후보별 첫 재생까지 시간
+if let raw = ProcessInfo.processInfo.environment["PLAYTEST_SHORTS"], !raw.isEmpty {
+    for id in raw.split(separator: ",").map(String.init) {
+        let t0 = Date()
+        do {
+            let list = try await StreamResolver.shared.candidates(id: id, audioOnly: false)
+            let resolve = Date().timeIntervalSince(t0)
+            print(String(format: "SHORTS %@ resolve=%.2fs candidates=%@", id, resolve, list.map(\.kind).description))
+            for source in list.prefix(4) {
+                let t1 = Date()
+                do {
+                    let item = try await StreamResolver.makeItem(source)
+                    let make = Date().timeIntervalSince(t1)
+                    item.preferredForwardBufferDuration = 2
+                    let player = AVPlayer(playerItem: item)
+                    player.isMuted = true
+                    player.play()
+                    var started: Double?
+                    while Date().timeIntervalSince(t1) < 15 {
+                        let t = player.currentTime().seconds
+                        if t.isFinite, t > 0.1 { started = Date().timeIntervalSince(t1); break }
+                        if item.status == .failed { break }
+                        try await Task.sleep(nanoseconds: 30_000_000)
+                    }
+                    print(String(format: "SHORTS %@ %@ make=%.2fs firstPlay=%@ size=%@ err=%@", id, source.kind, make,
+                                 started.map { String(format: "%.2fs", $0) } ?? "FAIL",
+                                 "\(item.presentationSize)", item.error.map { "\($0)" } ?? "none"))
+                    player.pause()
+                } catch {
+                    print("SHORTS \(id) \(source.kind) makeItem error=\(error)")
+                }
+            }
+        } catch {
+            print("SHORTS \(id) resolve error=\(error)")
+        }
+    }
+    print("PLAYTEST done")
+    exit(0)
+}
+
 for (id, audioOnly) in cases {
     do {
         let list = try await StreamResolver.shared.candidates(id: id, audioOnly: audioOnly)

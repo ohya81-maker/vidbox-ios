@@ -1,0 +1,21 @@
+name: Playback timing test
+
+on:
+  workflow_dispatch:
+    inputs:
+      shorts:
+        description: "Shorts video ids (comma separated)"
+        required: true
+
+jobs:
+  timing:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Measure
+        env:
+          PLAYTEST_SHORTS: ${{ inputs.shorts }}
+        run: |
+          swiftc -O ci/main.swift Vidbox/StreamResolver.swift Vidbox/Models.swift -o playtest
+          ./playtest
