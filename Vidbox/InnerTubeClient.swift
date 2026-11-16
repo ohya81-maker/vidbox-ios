@@ -406,7 +406,7 @@ final class InnerTubeClient {
             default:
                 break
             }
-            if let parsed, seen.insert(parsed.id).inserted {
+            if let parsed, !Blocklist.shared.isBlocked(parsed), seen.insert(parsed.id).inserted {
                 items.append(parsed)
             }
         }
@@ -439,7 +439,7 @@ final class InnerTubeClient {
             default:
                 break
             }
-            if let parsed, seen.insert(parsed.id).inserted {
+            if let parsed, !Blocklist.shared.isBlocked(parsed), seen.insert(parsed.id).inserted {
                 items.append(parsed)
             }
         }

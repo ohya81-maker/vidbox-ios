@@ -188,6 +188,7 @@ struct FeedList: View {
     @ObservedObject var model: FeedViewModel
     var limit: Int? = nil
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @ObservedObject private var blocklist = Blocklist.shared
 
     var body: some View {
         // 아이패드처럼 넓은 화면은 YouTube처럼 여러 줄 격자로
@@ -206,7 +207,8 @@ struct FeedList: View {
     }
 
     @ViewBuilder private var cards: some View {
-        let shown = limit.map { Array(model.items.prefix($0)) } ?? model.items
+        let all = blocklist.filter(model.items)
+        let shown = limit.map { Array(all.prefix($0)) } ?? all
         ForEach(shown) { item in
             VideoCard(item: item)
                 .task { if limit == nil { await model.loadMoreIfNeeded(current: item) } }
@@ -404,6 +406,32 @@ struct LibraryView: View {
             List {
                 accountSection
 
+                // 바로가기: 큰 타일로 한눈에
+                Section {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                        if account.isLoggedIn {
+                            tile("시청 기록", "clock.arrow.circlepath", .indigo) {
+                                BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory")
+                            }
+                            tile("구독 새 영상", "play.square.stack.fill", .red) {
+                                BrowseFeedScreen(title: "구독", browseID: "FEsubscriptions")
+                            }
+                            tile("좋아요", "hand.thumbsup.fill", .blue) {
+                                BrowseFeedScreen(title: "좋아요 표시한 동영상", browseID: "VLLL")
+                            }
+                        }
+                        tile("오프라인 저장", "arrow.down.circle.fill", .green, count: downloads.files.count) {
+                            DownloadsView()
+                        }
+                        tile("나중에 볼 동영상", "clock.fill", .orange, count: library.saved.count) {
+                            SavedVideosScreen()
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                }
+
                 if !library.history.isEmpty {
                     Section {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -442,50 +470,29 @@ struct LibraryView: View {
                 }
 
                 Section {
-                    NavigationLink {
-                        DownloadsView()
-                    } label: {
-                        HStack {
-                            Label("오프라인 저장 (다운로드)", systemImage: "arrow.down.circle")
-                            Spacer()
-                            Text("\(downloads.files.count)개").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section {
-                    if library.saved.isEmpty {
-                        Text("저장한 동영상이 없습니다").foregroundStyle(.secondary)
-                    }
-                    ForEach(library.saved) { item in
-                        VideoRow(item: item)
-                    }
-                    .onDelete { library.removeSaved(at: $0) }
-                } header: {
-                    Text("나중에 볼 동영상").font(.headline).foregroundStyle(.primary)
-                }
-
-                Section {
-                    Toggle(isOn: $player.audioOnlyPreference) {
-                        Label("기본으로 오디오 전용 재생", systemImage: "headphones")
-                    }
                     Toggle(isOn: $player.autoplay) {
-                        Label("다음 동영상 자동재생", systemImage: "infinity")
+                        settingLabel("다음 동영상 자동재생", "infinity", .purple)
                     }
                     Toggle(isOn: $player.miniPlayerEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Label("화면 내려도 계속 재생", systemImage: "rectangle.bottomhalf.inset.filled")
-                            Text("켜면 재생 화면을 내렸을 때 하단 재생 막대로 계속 재생합니다. 끄면 재생을 멈춥니다.")
+                            settingLabel("화면 내려도 계속 재생", "rectangle.bottomhalf.inset.filled", .teal)
+                            Text("끄면 재생 화면을 내릴 때 재생을 멈춰요.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .padding(.leading, 40)
                         }
+                    }
+                    Toggle(isOn: $player.audioOnlyPreference) {
+                        settingLabel("기본으로 오디오 전용 재생", "headphones", .pink)
                     }
                 } header: {
                     Text("재생 설정").font(.headline).foregroundStyle(.primary)
                 }
                 .tint(.green)
+
+                BlockedChannelsSection()
             }
-            .listStyle(.plain)
+            .listStyle(.insetGrouped)
             .hidesTabBarOnScroll()
             .navigationTitle("보관함")
             .toolbar(.visible, for: .navigationBar)
@@ -493,6 +500,43 @@ struct LibraryView: View {
             .confirmationDialog("로그아웃할까요?", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("로그아웃", role: .destructive) { account.logout() }
             }
+    }
+
+    private func tile<Dest: View>(_ title: String, _ icon: String, _ color: Color, count: Int? = nil,
+                                  @ViewBuilder destination: @escaping () -> Dest) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(color.gradient, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Spacer()
+                    if let count, count > 0 {
+                        Text("\(count)").font(.subheadline.weight(.bold)).foregroundStyle(.secondary)
+                    }
+                }
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func settingLabel(_ title: String, _ icon: String, _ color: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(color.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(title)
+        }
     }
 
     @ViewBuilder
@@ -514,21 +558,6 @@ struct LibraryView: View {
                         .buttonStyle(.borderless)
                 }
                 .padding(.vertical, 4)
-                NavigationLink {
-                    BrowseFeedScreen(title: "YouTube 시청 기록", browseID: "FEhistory")
-                } label: {
-                    Label("YouTube 시청 기록", systemImage: "clock.arrow.circlepath")
-                }
-                NavigationLink {
-                    BrowseFeedScreen(title: "구독", browseID: "FEsubscriptions")
-                } label: {
-                    Label("구독 채널 새 동영상", systemImage: "play.square.stack")
-                }
-                NavigationLink {
-                    BrowseFeedScreen(title: "좋아요 표시한 동영상", browseID: "VLLL")
-                } label: {
-                    Label("좋아요 표시한 동영상", systemImage: "hand.thumbsup")
-                }
             } else {
                 Button { showLogin = true } label: {
                     HStack(spacing: 14) {
@@ -547,5 +576,25 @@ struct LibraryView: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+}
+
+
+/// 나중에 볼 동영상 (보관함 타일에서)
+struct SavedVideosScreen: View {
+    @EnvironmentObject private var library: LibraryStore
+    var body: some View {
+        List {
+            if library.saved.isEmpty {
+                Text("저장한 동영상이 없어요").foregroundStyle(.secondary)
+            }
+            ForEach(library.saved) { item in
+                VideoRow(item: item)
+            }
+            .onDelete { library.removeSaved(at: $0) }
+        }
+        .listStyle(.plain)
+        .navigationTitle("나중에 볼 동영상")
+        .toolbar(.visible, for: .navigationBar)
     }
 }

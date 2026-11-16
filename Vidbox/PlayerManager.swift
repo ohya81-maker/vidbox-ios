@@ -195,6 +195,8 @@ final class PlayerManager: ObservableObject {
 
     func play(_ item: VideoItem, queue newQueue: [VideoItem]? = nil, audio: Bool? = nil, expand: Bool = true,
               startAt: Double = 0, upNextList: [VideoItem]? = nil) {
+        // 차단한 채널의 영상은 재생하지 않는다
+        if Blocklist.shared.isBlocked(item) { return }
         // 이전 Jellyfin 영상은 멈춘 위치를 서버에 알린다 (웹·TV에서 이어 보기)
         if let prev = current, JellyfinCatalog.isJellyfin(prev.id), prev.id != item.id {
             JellyfinAPI.report("stop", itemID: String(prev.id.dropFirst(3)), seconds: currentTime)

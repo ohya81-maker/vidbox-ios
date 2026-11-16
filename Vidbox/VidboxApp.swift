@@ -82,6 +82,12 @@ struct RootView: View {
             NavigationStack { DownloadsView() }
         }
         .task { await runLaunchHooks() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            FullScreenLock.apply()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            FullScreenLock.apply()
+        }
     }
 
     /// 자동 화면 점검용 실행 인자 (CI 시뮬레이터 스크린샷): -ktubeTab music / -ktubePlay <id> / -ktubeSeek 100
@@ -193,5 +199,20 @@ extension View {
 
     func hidesTabBarOnScroll() -> some View {
         modifier(HideTabBarOnScroll())
+    }
+}
+
+
+/// 아이패드(iPadOS 26 창 모드): 앱 창의 최소 크기를 화면 전체로 묶어 작은 창으로 줄일 수 없게 한다
+@MainActor
+enum FullScreenLock {
+    static func apply() {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        for scene in UIApplication.shared.connectedScenes {
+            guard let ws = scene as? UIWindowScene, let r = ws.sizeRestrictions else { continue }
+            let size = ws.screen.bounds.size
+            r.minimumSize = size
+            r.maximumSize = size
+        }
     }
 }

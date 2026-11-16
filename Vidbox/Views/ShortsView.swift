@@ -403,7 +403,7 @@ struct ShortsView: View {
         GeometryReader { geo in
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
-                    ForEach(feed.items) { item in
+                    ForEach(Blocklist.shared.filter(feed.items)) { item in
                         ShortPage(item: item, isCurrent: item.id == currentID, shorts: shorts,
                                   // 아이패드: 돋보기는 오른쪽 끝이라 가운데 영상과 겹치지 않는다 → 영상을 상태바 바로 아래부터
                                   topInset: topInset + (UIDevice.current.userInterfaceIdiom == .pad ? 0 : Self.topBar),
@@ -503,6 +503,8 @@ struct ShortPage: View {
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
     @State private var showSave = false
+    /// 채널(구독) 정보: 지금 보는 쇼츠만 가져온다 (한 번 받은 것은 기억)
+    @State private var info: WatchInfo?
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerManager
 
@@ -572,14 +574,41 @@ struct ShortPage: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { if isCurrent { shorts.togglePause() } }
+        .task(id: isCurrent) {
+            guard isCurrent, info == nil else { return }
+            if let cached = ShortInfoCache.shared.get(item.id) { info = cached; return }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard isCurrent, let got = try? await InnerTubeClient.shared.relatedWithInfo(videoID: item.id).1 else { return }
+            ShortInfoCache.shared.set(item.id, got)
+            info = got
+        }
         .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
         .overlay(alignment: .bottom) {
             HStack(alignment: .bottom, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
-                    if !item.channel.isEmpty {
+                    let name = info?.channelName.isEmpty == false ? info!.channelName : item.channel
+                    if !name.isEmpty {
                         HStack(spacing: 8) {
-                            AvatarView(url: item.channelThumbnail, size: 30)
-                            Text(item.channel).font(.subheadline.weight(.semibold))
+                            AvatarView(url: info?.channelAvatar ?? item.channelThumbnail, size: 32)
+                            Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                            if let info, !info.channelID.isEmpty {
+                                let on = info.subscribed ?? player.isSubscribed(info.channelID)
+                                Button {
+                                    let channel = SubscribedChannel(id: info.channelID, name: info.channelName, avatar: info.channelAvatar)
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        player.setSubscribed(channel, !on)
+                                        self.info?.subscribed = !on
+                                    }
+                                } label: {
+                                    Text(on ? "구독중" : "구독")
+                                        .font(.footnote.weight(.semibold))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .foregroundStyle(on ? Color.white : Color.black)
+                                        .background(on ? Color.white.opacity(0.22) : Color.white, in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                     Text(item.title)
@@ -622,5 +651,18 @@ struct ShortPage: View {
         .foregroundStyle(.white)
         .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         .contentShape(Rectangle())
+    }
+}
+
+
+/// 쇼츠 채널 정보 캐시 (같은 쇼츠로 돌아와도 다시 묻지 않게)
+@MainActor
+final class ShortInfoCache {
+    static let shared = ShortInfoCache()
+    private var map: [String: WatchInfo] = [:]
+    func get(_ id: String) -> WatchInfo? { map[id] }
+    func set(_ id: String, _ info: WatchInfo) {
+        if map.count > 300 { map.removeAll() }
+        map[id] = info
     }
 }

@@ -213,6 +213,7 @@ struct VideoMenu: View {
     let item: VideoItem
     @EnvironmentObject private var library: LibraryStore
     @State private var showSave = false
+    @State private var confirmBlock = false
 
     var body: some View {
         Menu {
@@ -231,6 +232,12 @@ struct VideoMenu: View {
             ShareLink(item: item.shareURL) {
                 Label("공유", systemImage: "square.and.arrow.up")
             }
+            if !JellyfinCatalog.isJellyfin(item.id), !item.channel.isEmpty || item.channelID != nil {
+                Divider()
+                Button(role: .destructive) { confirmBlock = true } label: {
+                    Label(item.channel.isEmpty ? "이 채널 차단" : "'\(item.channel)' 채널 차단", systemImage: "hand.raised")
+                }
+            }
         } label: {
             Image(systemName: "ellipsis")
                 .rotationEffect(.degrees(90))
@@ -242,6 +249,14 @@ struct VideoMenu: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
+        .confirmationDialog("이 채널을 차단할까요?", isPresented: $confirmBlock, titleVisibility: .visible) {
+            Button("차단", role: .destructive) {
+                withAnimation { Blocklist.shared.block(channelID: item.channelID, name: item.channel, avatar: item.channelThumbnail) }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("'\(item.channel)' 채널의 영상이 홈·검색·쇼츠·다음 영상에 더 이상 나오지 않아요. 보관함 > 차단한 채널에서 해제할 수 있어요.")
+        }
     }
 }
 

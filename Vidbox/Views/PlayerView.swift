@@ -20,6 +20,7 @@ struct PlayerView: View {
     /// 아래 목록을 위로 올린 만큼 (세로 영상은 이만큼 재생 화면이 줄어든다)
     @State private var scrollY: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @ObservedObject private var blocklist = Blocklist.shared
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -31,6 +32,19 @@ struct PlayerView: View {
                         .ignoresSafeArea()
                         .statusBarHidden()
                         .persistentSystemOverlays(.hidden)
+                        // 전체화면에서 아래로 쓸어내리거나 두 손가락으로 오므리면 일반 재생 화면으로
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 30, coordinateSpace: .global)
+                                .onEnded { v in
+                                    if v.translation.height > 90, abs(v.translation.height) > abs(v.translation.width) * 1.5 {
+                                        exitFullscreen()
+                                    }
+                                }
+                        )
+                        .simultaneousGesture(
+                            MagnifyGesture()
+                                .onEnded { v in if v.magnification < 0.85 { exitFullscreen() } }
+                        )
                 } else if player.isQueueMode && (player.audioOnly || player.musicVideoMode) {
                     MusicPlayerView()
                 } else {
@@ -148,6 +162,10 @@ struct PlayerView: View {
                 .background(Color(.systemBackground), ignoresSafeAreaEdges: .top)
                 .zIndex(2)
         }
+    }
+
+    private func exitFullscreen() {
+        withAnimation(.easeInOut(duration: 0.25)) { player.setFullscreen(false) }
     }
 
     private var dismissDrag: some Gesture {
@@ -437,7 +455,7 @@ struct PlayerView: View {
             } else {
                 relatedChips
             }
-            let list = player.isQueueMode ? player.queue : filteredRelated
+            let list = player.isQueueMode ? player.queue : Blocklist.shared.filter(filteredRelated)
             if list.isEmpty && !isJF {
                 ProgressView().frame(maxWidth: .infinity).padding()
             }
@@ -985,6 +1003,7 @@ struct MiniPlayerView: View {
             .glass(RoundedRectangle(cornerRadius: 22, style: .continuous), interactive: true)
             .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
             .onTapGesture { player.isExpanded = true }
+            .frame(maxWidth: UIDevice.current.userInterfaceIdiom == .pad ? 520 : .infinity)
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
