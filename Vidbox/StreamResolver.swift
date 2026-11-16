@@ -614,24 +614,12 @@ final class LocalHLS: @unchecked Sendable {
                     request.timeoutInterval = 12
                     request.setValue(StreamResolver.iosUserAgent, forHTTPHeaderField: "User-Agent")
                     if let range { request.setValue(range, forHTTPHeaderField: "Range") }
-                    guard let (bytes, response) = try? await URLSession.shared.bytes(for: request),
+                    // 한 번에 받는다. (예전: 1바이트씩 반복해서 받아 쌓았는데, 쇼츠처럼 첫 조각이 1~3MB로 크면
+                    //  그 반복에만 몇 초가 걸려 첫 재생이 5초 넘게 늦었다)
+                    guard let (body, response) = try? await URLSession.shared.data(for: request),
                           let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode)
                     else { return nil }
                     guard await claim.take() else { return nil }
-                    var body = Data()
-                    if http.expectedContentLength > 0 { body.reserveCapacity(Int(http.expectedContentLength)) }
-                    do {
-                        var buffer = [UInt8]()
-                        buffer.reserveCapacity(64 * 1024)
-                        for try await byte in bytes {
-                            buffer.append(byte)
-                            if buffer.count == 64 * 1024 {
-                                body.append(contentsOf: buffer)
-                                buffer.removeAll(keepingCapacity: true)
-                            }
-                        }
-                        body.append(contentsOf: buffer)
-                    } catch { return nil }
                     return (body, http)
                 }
             }

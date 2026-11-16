@@ -265,12 +265,13 @@ final class ShortsPlayer: ObservableObject {
     }
 
     /// 재생이 시작되지 않으면(서버 일시 오류·멈춘 스트림 등) 같은 주소를 다시 기다리지 않고
-    /// 5초마다 다음 재생 방식으로 바꾼다. 모두 안 되면 실패 표시
+    /// 3초마다 다음 재생 방식으로 바꾼다. 모두 안 되면 실패 표시
     private func armWatchdog(for id: String) {
         watchdog?.cancel()
         watchdog = Task { [weak self] in
-            for _ in 0..<6 {
-                try? await Task.sleep(for: .seconds(5))
+            for _ in 0..<8 {
+                // 쇼츠는 짧다: 3초 안에 시작하지 않으면 다음 재생 방식으로
+                try? await Task.sleep(for: .seconds(3))
                 guard !Task.isCancelled, let self, self.currentID == id, let slot = self.slots[id] else { return }
                 if self.isReady || self.isPaused || self.failed { return }
                 if slot.candidates.isEmpty { continue }   // 아직 주소를 받는 중
@@ -402,6 +403,9 @@ struct ShortsView: View {
         .environment(\.colorScheme, .dark)
         .task {
             await feed.loadInitial()
+            // 첫 쇼츠들의 재생 주소를 바로 미리 받아 둔다 (탭을 열자마자 시작되게)
+            let first = Array(feed.items.prefix(3).map(\.id))
+            Task { await StreamResolver.shared.prefetch(first) }
             if currentID == nil { currentID = feed.items.first?.id; scrollID = currentID }
         }
         .onChange(of: currentID) { _, _ in playCurrent() }
