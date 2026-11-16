@@ -59,13 +59,31 @@ final class InnerTubeClient {
 
     /// 영상 아래 추천 목록 (첫 20개 + 다음 페이지 토큰)
     func related(videoID: String) async throws -> FeedPage {
+        try await relatedWithInfo(videoID: videoID).0
+    }
+
+    /// 추천 목록 + 채널(구독)·댓글 정보를 한 번의 요청으로
+    func relatedWithInfo(videoID: String) async throws -> (FeedPage, WatchInfo?) {
         let json = try await post("next", body: ["videoId": videoID])
         let secondary = Self.dig(json, "contents", "twoColumnWatchNextResults", "secondaryResults") ?? json
         var page = Self.parsePage(secondary)
         page.items = page.items.filter { $0.id != videoID }
         page.continuation = Self.lastContinuation(secondary)
-        return page
+        return (page, Self.parseWatchInfo(json))
     }
+
+    // Social.swift 등 다른 파일에서 쓰는 도우미
+    func postPublic(_ endpoint: String, body: [String: Any]) async throws -> Any {
+        try await post(endpoint, body: body)
+    }
+    static func walkJSON(_ node: Any, _ visit: (String, Any) -> Void) { walk(node, visit) }
+    static func digJSON(_ node: Any?, _ path: String...) -> Any? {
+        var cur = node
+        for key in path { cur = (cur as? [String: Any])?[key] }
+        return cur
+    }
+    static func plainText(_ node: Any?) -> String? { text(node) }
+    static func thumbnailURL(_ node: Any?) -> URL? { lastThumbnail(node) }
 
     func relatedContinuation(_ token: String) async throws -> FeedPage {
         let json = try await post("next", body: ["continuation": token])

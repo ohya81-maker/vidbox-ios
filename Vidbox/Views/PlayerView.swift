@@ -11,6 +11,7 @@ struct PlayerView: View {
     @State private var showSave = false
     @State private var showDownload = false
     @State private var relatedFilter = 0
+    @State private var showComments = false
     /// 아래 목록을 위로 올린 만큼 (세로 영상은 이만큼 재생 화면이 줄어든다)
     @State private var scrollY: CGFloat = 0
 
@@ -59,6 +60,7 @@ struct PlayerView: View {
                             Color.clear.frame(height: tallHeight - 4).id("top")
                             info(item)
                             actions(item)
+                            commentsCard
                             upNext
                         }
                         .padding(.bottom, 12)
@@ -110,15 +112,72 @@ struct PlayerView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                AvatarView(url: item.channelThumbnail, size: 34)
-                Text(item.channel)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+                AvatarView(url: player.watchInfo?.channelAvatar ?? item.channelThumbnail, size: 36)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(player.watchInfo?.channelName.isEmpty == false ? player.watchInfo!.channelName : item.channel)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    if let subs = player.watchInfo?.subscriberText {
+                        Text(subs).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
                 Spacer()
+                if player.watchInfo != nil {
+                    let on = player.isSubscribedToCurrent
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { player.toggleSubscribe() }
+                    } label: {
+                        Label(on ? "구독중" : "구독", systemImage: on ? "bell" : "")
+                            .labelStyle(SubscribeLabelStyle(showIcon: on))
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .foregroundStyle(on ? Color.primary : Color(.systemBackground))
+                            .background(on ? Color(.tertiarySystemFill) : Color.primary, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.top, 8)
         }
         .padding(.horizontal, 14)
+    }
+
+    /// YouTube처럼 「댓글 1.2만」 + 첫 댓글 한 줄. 누르면 전체 댓글 창
+    @ViewBuilder
+    private var commentsCard: some View {
+        if let page = player.commentsPreview, let first = page.comments.first {
+            Button { showComments = true } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Text("댓글").font(.subheadline.weight(.semibold))
+                        if let count = page.countText?.replacingOccurrences(of: "댓글", with: "")
+                            .replacingOccurrences(of: "개", with: "").trimmingCharacters(in: .whitespaces) {
+                            Text(count).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.down").font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack(alignment: .top, spacing: 8) {
+                        AvatarView(url: first.avatar, size: 24)
+                        Text(first.text)
+                            .font(.footnote)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .sheet(isPresented: $showComments) {
+                CommentsSheet(first: page)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
     }
 
     private func actions(_ item: VideoItem) -> some View {
@@ -717,5 +776,88 @@ private extension View {
         self.frame(width: size, height: size)
             .contentShape(Rectangle())
             .shadow(color: .black.opacity(0.45), radius: 4, y: 1)
+    }
+}
+
+// MARK: - 구독 버튼 라벨 (구독중일 때만 종 아이콘)
+
+struct SubscribeLabelStyle: LabelStyle {
+    let showIcon: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            if showIcon { configuration.icon }
+            configuration.title
+        }
+    }
+}
+
+// MARK: - 댓글 전체 보기
+
+struct CommentsSheet: View {
+    let first: CommentPage
+    @State private var comments: [Comment] = []
+    @State private var next: String?
+    @State private var loading = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(comments) { c in
+                    CommentRow(comment: c)
+                        .listRowSeparator(.hidden)
+                        .onAppear { if c.id == comments.last?.id { Task { await loadMore() } } }
+                }
+                if loading {
+                    ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle(first.countText ?? "댓글")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .onAppear {
+            if comments.isEmpty {
+                comments = first.comments
+                next = first.next
+            }
+        }
+    }
+
+    private func loadMore() async {
+        guard !loading, let token = next else { return }
+        loading = true
+        defer { loading = false }
+        guard let page = try? await InnerTubeClient.shared.comments(token) else { return }
+        let known = Set(comments.map(\.id))
+        comments.append(contentsOf: page.comments.filter { !known.contains($0.id) })
+        next = page.next
+    }
+}
+
+struct CommentRow: View {
+    let comment: Comment
+    @State private var expanded = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            AvatarView(url: comment.avatar, size: 32)
+            VStack(alignment: .leading, spacing: 4) {
+                Text([comment.author, comment.published].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(comment.text)
+                    .font(.subheadline)
+                    .lineLimit(expanded ? nil : 5)
+                    .onTapGesture { expanded.toggle() }
+                HStack(spacing: 16) {
+                    Label(comment.likes ?? "", systemImage: "hand.thumbsup")
+                    if let replies = comment.replies { Label("답글 \(replies)", systemImage: "bubble.left") }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

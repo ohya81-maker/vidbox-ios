@@ -162,6 +162,21 @@ final class FeedViewModel: ObservableObject {
         await load(source: source)
     }
 
+    /// 직접 만든 목록 (이 기기에 저장한 구독 채널의 새 영상)
+    func loadCustom(empty: String, _ fetch: @escaping () async -> [VideoItem]) async {
+        requestID += 1
+        let id = requestID
+        isLoading = true
+        errorMessage = nil
+        continuation = nil
+        mixedTokens = []
+        let list = await fetch()
+        guard id == requestID else { return }
+        items = list
+        if list.isEmpty { errorMessage = empty }
+        isLoading = false
+    }
+
     /// 지금 화면의 영상을 빼고 순서를 섞는다 (새로고침 때 같은 목록이 그대로 나오지 않게)
     func freshen(excluding old: Set<String>) {
         let fresh = items.filter { !old.contains($0.id) }
@@ -207,6 +222,7 @@ struct HomeView: View {
 
     private let chips: [(title: String, query: String)] = [
         ("전체", "인기 동영상"),
+        ("구독", ""),            // 구독한 채널의 새 영상
         ("저장됨", ""),          // 내가 만든 저장 폴더 목록
         ("음악", "인기 음악"),
         ("K-POP", "케이팝 최신 뮤직비디오"),
@@ -258,6 +274,17 @@ struct HomeView: View {
     /// refresh: 당겨서 새로고침 — 방금 보던 영상은 빼고 다른 영상으로 채운다
     private func loadSelected(refresh: Bool = false) async {
         if chips[selected].title == "저장됨" { return }
+        model.endless = chips[selected].title != "구독"
+        if chips[selected].title == "구독" {
+            if account.isLoggedIn {
+                await model.load(source: .browse("FEsubscriptions"))
+            } else {
+                await model.loadCustom(empty: "구독한 채널이 없어요.\n영상 아래 「구독」을 누르면 여기에 새 영상이 모여요.") {
+                    await SubscriptionStore.shared.latestVideos()
+                }
+            }
+            return
+        }
         let shown = refresh ? Set(model.items.map(\.id)) : []
         if selected == 0 && account.isLoggedIn {
             await model.load(source: .browse("FEwhat_to_watch"))

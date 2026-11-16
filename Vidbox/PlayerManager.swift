@@ -33,6 +33,9 @@ final class PlayerManager: ObservableObject {
     }
     @Published private(set) var duration: Double = 0
     @Published private(set) var related: [VideoItem] = []
+    /// 지금 영상의 채널(구독)·댓글 정보
+    @Published private(set) var watchInfo: WatchInfo?
+    @Published private(set) var commentsPreview: CommentPage?
     /// 추천 영상 다음 페이지 (YouTube처럼 아래로 내리면 끝없이 이어짐)
     private var relatedToken: String?
     private var relatedLoading = false
@@ -202,13 +205,22 @@ final class PlayerManager: ObservableObject {
 
         relatedToken = nil
         relatedLoading = true
+        watchInfo = nil
+        commentsPreview = nil
         Task { [weak self] in
-            let page = try? await InnerTubeClient.shared.related(videoID: item.id)
+            let result = try? await InnerTubeClient.shared.relatedWithInfo(videoID: item.id)
             guard let self, self.current?.id == item.id else { return }
+            let page = result?.0
             self.related = page?.items ?? []
             self.relatedToken = page?.continuation
             self.relatedLoading = false
+            self.watchInfo = result?.1
             self.prefetchNext()
+            if let token = result?.1?.commentsToken,
+               let comments = try? await InnerTubeClient.shared.comments(token),
+               self.current?.id == item.id {
+                self.commentsPreview = comments
+            }
         }
     }
 
@@ -235,6 +247,26 @@ final class PlayerManager: ObservableObject {
             let known = Set(self.related.map(\.id)).union([playing.id])
             self.related.append(contentsOf: page.items.filter { !known.contains($0.id) })
             self.relatedToken = page.continuation ?? (fromSeed ? nil : self.relatedToken)
+        }
+    }
+
+    /// 지금 채널을 구독/취소. 로그인했으면 YouTube 계정에, 아니면 이 기기에 저장
+    var isSubscribedToCurrent: Bool {
+        guard let info = watchInfo else { return false }
+        return info.subscribed ?? SubscriptionStore.shared.isSubscribed(info.channelID)
+    }
+
+    func toggleSubscribe() {
+        guard var info = watchInfo else { return }
+        let on = !isSubscribedToCurrent
+        let channel = SubscribedChannel(id: info.channelID, name: info.channelName, avatar: info.channelAvatar)
+        SubscriptionStore.shared.set(channel, subscribed: on)
+        if info.subscribed != nil {
+            info.subscribed = on
+            watchInfo = info
+            Task { try? await InnerTubeClient.shared.setSubscribed(channel.id, on) }
+        } else {
+            objectWillChange.send()
         }
     }
 
@@ -346,6 +378,8 @@ final class PlayerManager: ObservableObject {
         current = nil
         related = []
         relatedToken = nil
+        watchInfo = nil
+        commentsPreview = nil
         queue = []
         playOrder = []
         isExpanded = false
