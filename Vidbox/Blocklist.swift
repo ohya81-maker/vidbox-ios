@@ -105,7 +105,6 @@ struct BlockedChannelsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pendingRemove: BlockRule?
     @State private var showAdd = false
-    @State private var newKeyword = ""
 
     var body: some View {
         NavigationStack {
@@ -139,7 +138,7 @@ struct BlockedChannelsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { newKeyword = ""; showAdd = true } label: {
+                    Button { showAdd = true } label: {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("채널 이름으로 차단 추가")
@@ -160,13 +159,7 @@ struct BlockedChannelsSheet: View {
                 Text(rule.keyword ? "이름에 '\(rule.name)'이(가) 들어간 채널의 영상이 다시 보이게 돼요."
                                   : "'\(rule.name)' 채널의 영상이 다시 보이게 돼요.")
             }
-            .alert("채널 이름으로 차단", isPresented: $showAdd) {
-                TextField("채널 이름(일부)", text: $newKeyword)
-                Button("차단") { withAnimation { blocklist.blockKeyword(newKeyword) } }
-                Button("취소", role: .cancel) {}
-            } message: {
-                Text("이름에 이 글자가 들어간 채널을 모두 막아요.")
-            }
+            .sheet(isPresented: $showAdd) { AddBlockSheet() }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -182,5 +175,135 @@ struct BlockedChannelsSheet: View {
                 .frame(width: 36, height: 36)
                 .background(Color.primary.opacity(0.08), in: Circle())
         }
+    }
+}
+
+
+// MARK: - 차단 추가: 채널을 검색해서 고르기 (오타 없이). 고르지 않고 입력한 글자로 막는 것도 그대로 가능
+
+struct AddBlockSheet: View {
+    @ObservedObject private var blocklist = Blocklist.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var hits: [ChannelHit] = []
+    @State private var searching = false
+    @State private var searchedFor = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("채널 이름 검색 (예: 한길뉴스)", text: $query)
+                            .focused($focused)
+                            .submitLabel(.search)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        if !query.isEmpty {
+                            Button { query = "" } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                if !trimmed.isEmpty {
+                    Section {
+                        if searching && hits.isEmpty {
+                            HStack { Spacer(); ProgressView(); Spacer() }
+                        } else if hits.isEmpty && searchedFor == trimmed {
+                            Text("찾은 채널이 없어요").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        ForEach(hits) { h in hitRow(h) }
+                    } header: {
+                        Text("검색 결과에서 고르면 그 채널만 정확히 막아요")
+                    }
+
+                    Section {
+                        let already = blocklist.rules.contains { $0.keyword && $0.name == trimmed }
+                        Button {
+                            withAnimation { blocklist.blockKeyword(trimmed) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "textformat").frame(width: 40)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("'\(trimmed)' 글자로 막기").font(.subheadline.weight(.semibold))
+                                    Text("이름에 이 글자가 들어간 채널 모두 (실제 채널 이름이 다르면 안 막혀요)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                capsule(already ? "추가됨" : "차단", on: already)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(already)
+                    } header: {
+                        Text("검색 결과 없이 입력한 글자 그대로")
+                    }
+                }
+            }
+            .navigationTitle("채널 차단 추가")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("닫기")
+                }
+            }
+            .task(id: trimmed) { await search(trimmed) }
+            .onAppear { focused = true }
+        }
+        .presentationDetents([.large])
+    }
+
+    private func hitRow(_ h: ChannelHit) -> some View {
+        let blocked = blocklist.isBlocked(channelID: h.id, name: h.name)
+        return HStack(spacing: 12) {
+            AvatarView(url: h.avatar, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(h.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text([h.handle, h.subscribers].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button {
+                withAnimation { blocklist.block(channelID: h.id, name: h.name, avatar: h.avatar) }
+            } label: {
+                capsule(blocked ? "차단됨" : "차단", on: blocked)
+            }
+            .buttonStyle(.plain)
+            .disabled(blocked)
+        }
+    }
+
+    private func capsule(_ text: String, on: Bool) -> some View {
+        Text(text)
+            .font(.footnote.weight(.semibold))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .foregroundStyle(on ? Color.secondary : Color(.systemBackground))
+            .background(on ? Color.primary.opacity(0.08) : Color.primary, in: Capsule())
+    }
+
+    private func search(_ q: String) async {
+        guard !q.isEmpty else { hits = []; searchedFor = ""; return }
+        // 입력이 멈추면 찾는다
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        if Task.isCancelled { return }
+        searching = true
+        defer { searching = false }
+        let found = (try? await InnerTubeClient.shared.searchChannels(q)) ?? []
+        if Task.isCancelled { return }
+        hits = found
+        searchedFor = q
     }
 }

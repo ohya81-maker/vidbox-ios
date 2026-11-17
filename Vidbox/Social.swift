@@ -82,6 +82,14 @@ enum ChannelTab: String, CaseIterable, Hashable {
     }
 }
 
+struct ChannelHit: Identifiable, Hashable {
+    let id: String
+    var name: String
+    var avatar: URL?
+    var handle: String?
+    var subscribers: String?
+}
+
 struct ChannelPlaylist: Identifiable, Hashable {
     let id: String
     var title: String
@@ -302,6 +310,25 @@ extension InnerTubeClient {
             page.tabParams[tab] = params
         }
         return page
+    }
+
+    /// 채널 이름으로 채널 찾기 (차단 추가할 때 오타 없이 고르게)
+    func searchChannels(_ query: String) async throws -> [ChannelHit] {
+        let json = try await postPublic("search", body: ["query": query, "params": "EgIQAg%3D%3D"])
+        var hits: [ChannelHit] = []
+        var seen = Set<String>()
+        Self.walkJSON(json) { key, value in
+            guard key == "channelRenderer", let d = value as? [String: Any],
+                  let id = d["channelId"] as? String, seen.insert(id).inserted else { return }
+            // YouTube는 subscriberCountText 자리에 @핸들, videoCountText 자리에 구독자 수를 넣어 보낸다
+            let a = Self.plainText(d["subscriberCountText"])
+            let b = Self.plainText(d["videoCountText"])
+            let handle = [a, b].compactMap { $0 }.first { $0.hasPrefix("@") }
+            let subs = [a, b].compactMap { $0 }.first { !$0.hasPrefix("@") }
+            hits.append(ChannelHit(id: id, name: Self.plainText(d["title"]) ?? "",
+                                   avatar: Self.thumbnailURL(d["thumbnail"]), handle: handle, subscribers: subs))
+        }
+        return hits
     }
 
     /// 채널의 탭 하나 (홈·동영상·Shorts·재생목록·게시물)
