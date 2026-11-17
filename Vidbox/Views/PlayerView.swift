@@ -1484,6 +1484,7 @@ struct JellyfinPlaybackSettings: View {
     @AppStorage("subtitleScale") private var subtitleScale: Double = 1.0
     @AppStorage("mediaFit") private var mediaFit = 1
     @State private var subOffset: Double = 0
+    @State private var startOffset: Double = 0
     /// 위쪽 가로 탭: 자막 · 음성 · 화질 · 화면
     @State private var page = 0
 
@@ -1580,7 +1581,15 @@ struct JellyfinPlaybackSettings: View {
             .navigationTitle("재생 설정")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .onAppear { subOffset = JellyfinCatalog.shared.subtitleOffset(videoID) }
+        .onAppear {
+            subOffset = JellyfinCatalog.shared.subtitleOffset(videoID)
+            startOffset = subOffset
+        }
+        .onDisappear {
+            // 자막 싱크를 바꿨으면 진단 기록 (영상 위치마다 값이 다르면 어긋남이 점점 커지는 것)
+            guard subOffset != startOffset else { return }
+            PlaybackDiag.report("sub-offset", id: videoID, details: PlayerManager.shared.subtitleSyncDetails(offset: subOffset))
+        }
     }
 
     private var offsetLabel: String {

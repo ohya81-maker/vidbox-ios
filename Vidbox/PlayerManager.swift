@@ -472,6 +472,17 @@ final class PlayerManager: ObservableObject {
         }
     }
 
+    /// 자막 싱크 진단: 보정값 · 영상 위치 · 재생 방식 (주소의 키·토큰은 빼고 방식만)
+    func subtitleSyncDetails(offset: Double) -> [String] {
+        let t = player.currentTime().seconds
+        let url = (player.currentItem?.asset as? AVURLAsset)?.url.absoluteString ?? ""
+        var path = url.contains("static=true") ? "direct" : url.contains("master.m3u8") ? "hls" : "other"
+        if url.contains("AllowVideoStreamCopy=true") { path += "-copy" }
+        if url.contains("SegmentContainer=mp4") { path += "-fmp4" } else if url.contains("SegmentContainer=ts") { path += "-ts" }
+        return ["offset=\(offset)", "at=\(t.isFinite ? Int(t) : -1)s", "path=\(path)", "source=\(sourceKind)",
+                "title=\(current?.title ?? "")", "cues=\(subtitles.cues.count)"]
+    }
+
     private func stopSubtitles() {
         if let subtitleObserver { player.removeTimeObserver(subtitleObserver) }
         subtitleObserver = nil
