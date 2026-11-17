@@ -1483,6 +1483,7 @@ struct JellyfinPlaybackSettings: View {
     @State private var quality = JFQuality.current
     @AppStorage("subtitleScale") private var subtitleScale: Double = 1.0
     @AppStorage("mediaFit") private var mediaFit = 1
+    @State private var subOffset: Double = 0
     /// 위쪽 가로 탭: 자막 · 음성 · 화질 · 화면
     @State private var page = 0
 
@@ -1542,6 +1543,27 @@ struct JellyfinPlaybackSettings: View {
                             }
                             .pickerStyle(.segmented)
                         }
+                        if choice?.subtitleIndex != nil, choice?.subtitleIsText != false {
+                            Section {
+                                HStack(spacing: 8) {
+                                    syncButton("-0.5") { shiftSub(-0.5) }
+                                    syncButton("-0.1") { shiftSub(-0.1) }
+                                    Text(offsetLabel)
+                                        .font(.subheadline.monospacedDigit())
+                                        .frame(maxWidth: .infinity)
+                                        .lineLimit(1).minimumScaleFactor(0.7)
+                                    syncButton("+0.1") { shiftSub(0.1) }
+                                    syncButton("+0.5") { shiftSub(0.5) }
+                                }
+                                if subOffset != 0 {
+                                    Button("싱크 초기화") { setSub(0) }
+                                }
+                            } header: {
+                                Text("자막 싱크")
+                            } footer: {
+                                Text("자막이 말보다 늦게 나오면 - 쪽, 빨리 나오면 + 쪽을 누르세요. 바로 적용되고 이 작품에 기억돼요.")
+                            }
+                        }
                         Section {
                             row("끄기", selected: choice?.subtitleIndex == nil) { apply(subtitle: -1) }
                             ForEach(choice?.subtitleTracks ?? []) { t in
@@ -1558,6 +1580,31 @@ struct JellyfinPlaybackSettings: View {
             .navigationTitle("재생 설정")
             .navigationBarTitleDisplayMode(.inline)
         }
+        .onAppear { subOffset = JellyfinCatalog.shared.subtitleOffset(videoID) }
+    }
+
+    private var offsetLabel: String {
+        if abs(subOffset) < 0.05 { return "맞춤 없음" }
+        let v = String(format: "%.1f초", abs(subOffset))
+        return subOffset < 0 ? "자막 \(v) 빠르게" : "자막 \(v) 늦게"
+    }
+
+    private func syncButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .frame(width: 46, height: 34)
+                .background(.quaternary, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func shiftSub(_ delta: Double) { setSub(((subOffset + delta) * 10).rounded() / 10) }
+
+    private func setSub(_ value: Double) {
+        subOffset = value
+        JellyfinCatalog.shared.setSubtitleOffset(videoID, value)
+        PlayerManager.shared.subtitles.setOffset(value)
     }
 
     private func row(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {

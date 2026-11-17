@@ -518,6 +518,16 @@ final class JellyfinCatalog: @unchecked Sendable {
         return c.subtitleTracks.filter(\.isText).firstIndex { $0.index == idx }
     }
 
+    /// 자막 싱크 (초, +면 자막을 늦게 · -면 빠르게). 같은 시리즈는 보통 같은 파일 묶음이라 시리즈 단위로 기억
+    private func subtitleOffsetKey(_ id: String) -> String {
+        let raw = String(id.dropFirst(3))
+        return "subOffset." + (item(raw)?.SeriesId ?? raw)
+    }
+    func subtitleOffset(_ id: String) -> Double { UserDefaults.standard.double(forKey: subtitleOffsetKey(id)) }
+    func setSubtitleOffset(_ id: String, _ value: Double) {
+        UserDefaults.standard.set(value, forKey: subtitleOffsetKey(id))
+    }
+
     func wantsSubtitles(_ id: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return (choices[String(id.dropFirst(3))] ?? nil)?.subtitleIndex != nil
@@ -624,11 +634,26 @@ enum SubtitleParser {
 final class SubtitleClock: ObservableObject {
     @Published var text: String?
     var cues: [SubtitleCue] = []
+    /// 자막 싱크 보정 (초, +면 자막을 늦게)
+    private(set) var offset: Double = 0
     private var index = 0
+    private var lastTime: Double?
 
-    func reset(_ new: [SubtitleCue]) { cues = new; index = 0; text = nil }
+    func reset(_ new: [SubtitleCue], offset: Double = 0) {
+        cues = new; index = 0; text = nil; self.offset = offset
+        if new.isEmpty { lastTime = nil }
+        if let lastTime, !new.isEmpty { update(lastTime) }
+    }
 
-    func update(_ t: Double) {
+    func setOffset(_ value: Double) {
+        offset = value
+        index = 0
+        if let lastTime { update(lastTime) }
+    }
+
+    func update(_ playerTime: Double) {
+        lastTime = playerTime
+        let t = playerTime - offset
         guard !cues.isEmpty else { if text != nil { text = nil }; return }
         // 앞으로 진행하면 이어서, 뒤로 가면 처음부터 찾는다
         if index >= cues.count || cues[index].start > t { index = 0 }

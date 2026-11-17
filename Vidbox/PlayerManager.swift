@@ -397,7 +397,7 @@ final class PlayerManager: ObservableObject {
                   let text = String(data: data, encoding: .utf8) else { return }
             let cues = SubtitleParser.parse(text)
             guard let self, self.current?.id == videoID else { return }
-            self.subtitles.reset(cues)
+            self.subtitles.reset(cues, offset: JellyfinCatalog.shared.subtitleOffset(videoID))
             self.startSubtitleTimer()
         }
     }
