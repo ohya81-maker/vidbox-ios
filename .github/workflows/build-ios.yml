@@ -56,7 +56,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build 2>&1 | tee build.log | grep -E "error:|warning: .*Vidbox/|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/Build/Products/Release-iphoneos/Vidbox.app
+          # 컴파일이 실패하면 실행 파일 없는 빈 앱이 만들어진다 → 여기서 확실히 실패로 처리
+          if grep -q "BUILD FAILED" build.log; then grep -E "error:" build.log | head -20; exit 1; fi
+          test -f build/Build/Products/Release-iphoneos/Vidbox.app/Vidbox
 
       # 「미디어」 탭 자동 로그인용 계정 (저장소에는 없고 GitHub Secrets에만: JF_GUEST_USER / JF_GUEST_PASS)
       - name: Add Jellyfin auto-login

@@ -101,7 +101,7 @@ struct PlayerView: View {
         return ZStack(alignment: .top) {
             // 당기는 만큼 바탕이 검게 (영상만 보기에서는 완전히 검게)
             Color.black
-                .opacity(focusMode ? 1 : min(1, pull / 120))
+                .opacity(focusMode ? 1.0 : Double(min(1, pull / 120)))
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
@@ -129,7 +129,7 @@ struct PlayerView: View {
                             withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { focusMode = true }
                         }
                     }
-                    .opacity(focusMode ? 0 : max(0, 1 - pull / 160))
+                    .opacity(focusMode ? 0.0 : Double(max(0, 1 - pull / 160)))
                     .allowsHitTesting(!focusMode)
                     .onChange(of: item.id) { _, _ in
                         proxy.scrollTo("top", anchor: .top)
