@@ -209,16 +209,16 @@ extension View {
 }
 
 
-/// 아이패드(iPadOS 26 창 모드): 앱 창의 최소 크기를 화면 전체로 묶어 작은 창으로 줄일 수 없게 한다
+/// 아이패드(iPadOS 26 창 모드): 손잡이로 원하는 크기까지 부드럽게 줄이고 늘릴 수 있게
+/// (예전 버전의 「크기 고정」을 풀고, 너무 작아지지만 않게 최소 크기만 둔다)
 @MainActor
 enum FullScreenLock {
     static func apply() {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
         for scene in UIApplication.shared.connectedScenes {
             guard let ws = scene as? UIWindowScene, let r = ws.sizeRestrictions else { continue }
-            let size = ws.screen.bounds.size
-            r.minimumSize = size
-            r.maximumSize = size
+            r.minimumSize = CGSize(width: 375, height: 500)
+            r.maximumSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         }
     }
 }
