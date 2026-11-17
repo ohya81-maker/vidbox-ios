@@ -910,6 +910,12 @@ final class PlayerManager: ObservableObject {
         backgroundedAt = Date()
         let wasPlaying = player.timeControlStatus != .paused
         for layer in layers.allObjects { layer.player = nil }
+        // 보관함 › 재생 설정 「화면 내려도 계속 재생」이 꺼져 있으면 (영상/음악 각각)
+        // 앱을 내리거나 화면을 꺼도 멈춘다
+        if current != nil && !keepsPlayingWhenClosed {
+            if wasPlaying { pause() }
+            return
+        }
         if wasPlaying { player.play() }
     }
 

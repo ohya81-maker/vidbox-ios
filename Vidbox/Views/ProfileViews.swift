@@ -97,7 +97,7 @@ struct LibraryView: View {
 
                 sectionTitle("재생 설정")
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("화면 내려도 계속 재생 · 끄면 재생 화면을 내릴 때 멈춰요")
+                    Text("화면 내려도 계속 재생 · 끄면 재생 화면을 내리거나, 앱을 나가거나, 화면을 끌 때 멈춰요")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 16)
