@@ -922,8 +922,9 @@ struct ShortsShelf: View {
 
     var body: some View {
         let list = blocklist.filter(model.items)
-        let count = sizeClass == .regular ? 6 : 4
-        let shown = Array(list.prefix(count))
+        let regular = sizeClass == .regular
+        // 아이패드: YouTube처럼 가로로 넘기는 한 줄 (12개), 폰: 2×2
+        let shown = Array(list.prefix(regular ? 12 : 4))
         VStack(alignment: .leading, spacing: 12) {
             if !shown.isEmpty {
                 HStack(spacing: 10) {
@@ -933,25 +934,42 @@ struct ShortsShelf: View {
                     Text("Shorts").font(.title3.weight(.bold))
                 }
                 .padding(.horizontal, 16)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: sizeClass == .regular ? 6 : 2),
-                          spacing: 10) {
-                    ForEach(shown) { item in
-                        NavigationLink(value: ShortsSeed(items: list, start: item.id)) {
-                            tile(item)
+                if regular {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(shown) { item in
+                                NavigationLink(value: ShortsSeed(items: list, start: item.id)) {
+                                    tile(item, aspect: 9 / 15)
+                                }
+                                .buttonStyle(.plain)
+                                // 화면에 4개 반쯤 보이게 (다음 것이 살짝 보여 넘길 수 있음을 알림)
+                                .containerRelativeFrame(.horizontal, count: 9, span: 2, spacing: 12)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .scrollTargetLayout()
                     }
+                    .scrollTargetBehavior(.viewAligned)
+                    .contentMargins(.horizontal, 16, for: .scrollContent)
+                } else {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+                        ForEach(shown) { item in
+                            NavigationLink(value: ShortsSeed(items: list, start: item.id)) {
+                                tile(item)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
                 }
-                .padding(.horizontal, 12)
             }
         }
         .padding(.vertical, 6)
         .task { await model.load() }
     }
 
-    private func tile(_ item: VideoItem) -> some View {
+    private func tile(_ item: VideoItem, aspect: CGFloat = 9 / 16) -> some View {
         Color(.tertiarySystemFill)
-            .aspectRatio(9 / 16, contentMode: .fit)
+            .aspectRatio(aspect, contentMode: .fit)
             .overlay {
                 AsyncImage(url: URL(string: "https://i.ytimg.com/vi/\(item.id)/oar2.jpg")) { phase in
                     if let image = phase.image {
