@@ -360,6 +360,30 @@ enum JellyfinAPI {
         )
     }
 
+    /// 시리즈·시즌을 「재생」했을 때 틀 화: 이어 볼 화(NextUp) → 없으면 첫 화
+    static func episodeToPlay(for item: JFItem) async -> JFItem? {
+        guard let u = JellyfinSession.shared.userID else { return nil }
+        let seriesID = item.Type == "Series" ? item.Id : item.SeriesId
+        if let s = seriesID, item.Type == "Series",
+           let next = try? await items("/Shows/NextUp?seriesId=\(s)&userId=\(u)&limit=1&fields=\(fields)"),
+           let first = next.first {
+            return first
+        }
+        if let s = seriesID {
+            var path = "/Shows/\(s)/Episodes?userId=\(u)&fields=\(fields)"
+            if item.Type == "Season" { path += "&seasonId=\(item.Id)" }
+            if let all = try? await items(path), !all.isEmpty {
+                // 끝까지 본 화는 건너뛰고 처음 안 본 화부터
+                return all.first { ($0.progress ?? 0) < 0.95 } ?? all.first
+            }
+        }
+        // 그 밖의 폴더(모음집 등): 안에 든 첫 영상
+        if let kids = try? await children(of: item.Id, limit: 20) {
+            return kids.first { !$0.isFolder }
+        }
+        return nil
+    }
+
     /// 다음에 볼 것: 에피소드면 같은 시리즈의 다음 화들, 아니면 비슷한 작품
     static func upNext(after itemID: String) async -> [JFItem] {
         guard let u = JellyfinSession.shared.userID,

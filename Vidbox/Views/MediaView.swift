@@ -67,6 +67,13 @@ final class MediaModel: ObservableObject {
 @MainActor
 enum MediaPlay {
     static func play(_ item: JFItem, in list: [JFItem]) {
+        // 시리즈·시즌(드라마 등)은 그 자체로 재생할 수 없다 → 이어 볼 화나 첫 화를 찾아 재생
+        if item.isFolder || item.Type == "Series" || item.Type == "Season" {
+            Task {
+                if let ep = await JellyfinAPI.episodeToPlay(for: item) { play(ep, in: [ep]) }
+            }
+            return
+        }
         let player = PlayerManager.shared
         let playable = list.filter { !$0.isFolder }
         let index = playable.firstIndex(where: { $0.Id == item.Id }) ?? 0
