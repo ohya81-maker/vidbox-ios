@@ -193,32 +193,49 @@ final class FeedViewModel: ObservableObject {
 struct FeedList: View {
     @ObservedObject var model: FeedViewModel
     var limit: Int? = nil
+    /// 목록 중간에 끼울 묶음 (홈의 Shorts 줄)
+    var shelf: AnyView? = nil
     @Environment(\.horizontalSizeClass) private var sizeClass
     @ObservedObject private var blocklist = Blocklist.shared
 
     var body: some View {
+        let all = blocklist.filter(model.items)
+        let shown = limit.map { Array(all.prefix($0)) } ?? all
+        // YouTube처럼 영상 몇 개 다음에 Shorts 줄
+        let after = sizeClass == .regular ? 6 : 2
         // 아이패드처럼 넓은 화면은 YouTube처럼 여러 줄 격자로
         if sizeClass == .regular {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16, alignment: .top)], spacing: 8) {
-                cards
+            if let shelf, shown.count > after {
+                grid(Array(shown.prefix(after)))
+                shelf.padding(.vertical, 8)
+                grid(Array(shown.dropFirst(after)))
+            } else {
+                grid(shown)
             }
-            .padding(.horizontal, 16)
             footer
         } else {
             LazyVStack(spacing: 0) {
-                cards
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
+                    card(item)
+                    if index == after - 1, let shelf {
+                        shelf.padding(.vertical, 8)
+                    }
+                }
                 footer
             }
         }
     }
 
-    @ViewBuilder private var cards: some View {
-        let all = blocklist.filter(model.items)
-        let shown = limit.map { Array(all.prefix($0)) } ?? all
-        ForEach(shown) { item in
-            VideoCard(item: item)
-                .task { if limit == nil { await model.loadMoreIfNeeded(current: item) } }
+    private func grid(_ items: [VideoItem]) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16, alignment: .top)], spacing: 8) {
+            ForEach(items) { card($0) }
         }
+        .padding(.horizontal, 16)
+    }
+
+    private func card(_ item: VideoItem) -> some View {
+        VideoCard(item: item)
+            .task { if limit == nil { await model.loadMoreIfNeeded(current: item) } }
     }
 
     @ViewBuilder private var footer: some View {
@@ -276,7 +293,7 @@ struct HomeView: View {
                     if chips[selected].title == "저장됨" {
                         SavedFoldersList()
                     } else {
-                        FeedList(model: model)
+                        FeedList(model: model, shelf: selected == 0 ? AnyView(ShortsShelf()) : nil)
                     }
                 }
             }
@@ -306,6 +323,7 @@ struct HomeView: View {
     /// refresh: 당겨서 새로고침 — 방금 보던 영상은 빼고 다른 영상으로 채운다
     private func loadSelected(refresh: Bool = false) async {
         if chips[selected].title == "저장됨" { return }
+        if selected == 0 { Task { await HomeShortsModel.shared.load(force: refresh) } }
         model.endless = chips[selected].title != "구독"
         if chips[selected].title == "구독" {
             if account.isLoggedIn {

@@ -26,6 +26,7 @@ struct RootView: View {
     @EnvironmentObject private var player: PlayerManager
     @State private var tab: AppTab = .home
     @ObservedObject private var search = SearchRouter.shared
+    @ObservedObject private var shortsRouter = ShortsRouter.shared
     @State private var showDownloadsTest = false
     /// 실제 화면 폭 구분 (아이패드 = regular). 탭바만 아래에 두려고 TabView에는 compact를 주고, 화면 내용에는 이 값을 돌려준다
     @Environment(\.horizontalSizeClass) private var realSizeClass
@@ -36,7 +37,7 @@ struct RootView: View {
                 HomeView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
-                Label { Text("홈") } icon: { Image(uiImage: UIImage(systemName: tab == .home ? "house.fill" : "house")!) }
+                tabLabel("홈", Image(uiImage: UIImage(systemName: tab == .home ? "house.fill" : "house")!))
             }
             Tab(value: AppTab.shorts) {
                 NavigationStack {
@@ -47,24 +48,24 @@ struct RootView: View {
                 .environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
-                Label { Text("Shorts") } icon: { Image(uiImage: UIImage(systemName: tab == .shorts ? "play.rectangle.on.rectangle.fill" : "play.rectangle.on.rectangle")!) }
+                tabLabel("Shorts", Image(uiImage: UIImage(systemName: tab == .shorts ? "play.rectangle.on.rectangle.fill" : "play.rectangle.on.rectangle")!))
             }
             Tab(value: AppTab.music) {
                 MusicView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
-                Label { Text("음악") } icon: { Image(uiImage: UIImage(systemName: tab == .music ? "headphones.circle.fill" : "headphones.circle")!) }
+                tabLabel("음악", Image(uiImage: UIImage(systemName: tab == .music ? "headphones.circle.fill" : "headphones.circle")!))
             }
             Tab(value: AppTab.kids) {
                 KidsView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
-                Label { Text("KIDS") } icon: { Image(uiImage: UIImage(systemName: tab == .kids ? "face.smiling.inverse" : "face.smiling")!) }
+                tabLabel("KIDS", Image(uiImage: UIImage(systemName: tab == .kids ? "face.smiling.inverse" : "face.smiling")!))
             }
             Tab(value: AppTab.media) {
                 MediaView().miniPlayerInset().environment(\.horizontalSizeClass, realSizeClass)
             } label: {
-                Label { Text("미디어") } icon: { Image(uiImage: UIImage(systemName: tab == .media ? "play.tv.fill" : "play.tv")!) }
+                tabLabel("미디어", Image(uiImage: UIImage(systemName: tab == .media ? "play.tv.fill" : "play.tv")!))
             }
         }
         // 아이패드에서도 YouTube처럼 탭바를 화면 아래에 (기본은 위쪽 떠 있는 탭바)
@@ -86,6 +87,7 @@ struct RootView: View {
         .sheet(isPresented: $showDownloadsTest) {
             NavigationStack { DownloadsView() }
         }
+        .onChange(of: shortsRouter.request) { _, r in if r != nil { tab = .shorts } }
         .task { await runLaunchHooks() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             FullScreenLock.apply()
@@ -93,6 +95,16 @@ struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             FullScreenLock.apply()
+        }
+    }
+
+    /// 하단 탭 이름표: 폰은 YouTube처럼 아이콘만, 아이패드는 아이콘+글자
+    @ViewBuilder
+    private func tabLabel(_ title: String, _ icon: Image) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            Label { Text(title) } icon: { icon }
+        } else {
+            icon
         }
     }
 

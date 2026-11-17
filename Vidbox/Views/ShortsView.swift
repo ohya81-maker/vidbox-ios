@@ -29,6 +29,12 @@ final class ShortsFeed: ObservableObject {
         UserDefaults.standard.set(seen, forKey: Self.seenKey)
     }
 
+    /// 홈의 Shorts 줄에서 고른 쇼츠들을 맨 앞에
+    func prepend(_ list: [VideoItem]) {
+        let ids = Set(list.map(\.id))
+        items = list + items.filter { !ids.contains($0.id) }
+    }
+
     func loadInitial() async {
         guard items.isEmpty else { return }
         await loadMore()
@@ -390,6 +396,7 @@ struct ShortsView: View {
     @State private var scrollID: String?
     /// 채널 화면으로 넘어가 있는 동안
     @State private var pushedAway = false
+    @ObservedObject private var router = ShortsRouter.shared
     /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
     @Environment(\.colorScheme) private var appScheme
     @ObservedObject private var search = SearchRouter.shared
@@ -471,7 +478,9 @@ struct ShortsView: View {
             }
         }
         .environment(\.colorScheme, .dark)
+        .onChange(of: router.request) { _, r in if let r { open(r) } }
         .task {
+            if let r = router.request { open(r) }
             await feed.loadInitial()
             // 첫 쇼츠들의 재생 주소를 바로 미리 받아 둔다 (탭을 열자마자 시작되게)
             let first = Array(feed.items.prefix(3).map(\.id))
@@ -494,6 +503,14 @@ struct ShortsView: View {
         .onChange(of: feed.items.count) { old, _ in
             if old == 0, currentID == nil { currentID = feed.items.first?.id }
         }
+    }
+
+    /// 홈에서 누른 쇼츠부터 보기
+    private func open(_ r: ShortsRouter.Request) {
+        router.request = nil
+        feed.prepend(r.items)
+        currentID = r.start
+        scrollID = r.start
     }
 
     private func playCurrent() {
@@ -804,5 +821,111 @@ struct ShortsProgressBar: View {
     static func clock(_ s: Double) -> String {
         let v = max(0, Int(s.rounded()))
         return String(format: "%d:%02d", v / 60, v % 60)
+    }
+}
+
+
+// MARK: - 홈 피드의 Shorts 줄 (YouTube처럼 2×2)
+
+/// 홈에서 쇼츠를 누르면 Shorts 탭으로 넘어가 그 쇼츠부터
+@MainActor
+final class ShortsRouter: ObservableObject {
+    static let shared = ShortsRouter()
+    struct Request: Equatable {
+        let token = UUID()
+        let items: [VideoItem]
+        let start: String
+    }
+    @Published var request: Request?
+}
+
+@MainActor
+final class HomeShortsModel: ObservableObject {
+    static let shared = HomeShortsModel()
+    @Published private(set) var items: [VideoItem] = []
+    private var loading = false
+    private let queries = ["#shorts 인기", "#shorts 웃긴", "#shorts 음악", "#shorts 브이로그", "#shorts 동물", "#shorts 스포츠"]
+
+    func load(force: Bool = false) async {
+        if loading || (!items.isEmpty && !force) { return }
+        loading = true
+        defer { loading = false }
+        guard let page = try? await InnerTubeClient.shared.shorts(queries.randomElement() ?? "#shorts", continuation: nil) else { return }
+        let fresh = Blocklist.shared.filter(page.items).shuffled()
+        if !fresh.isEmpty { items = Array(fresh.prefix(12)) }
+    }
+}
+
+struct ShortsShelf: View {
+    @ObservedObject private var model = HomeShortsModel.shared
+    @ObservedObject private var blocklist = Blocklist.shared
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    var body: some View {
+        let list = blocklist.filter(model.items)
+        let count = sizeClass == .regular ? 6 : 4
+        let shown = Array(list.prefix(count))
+        VStack(alignment: .leading, spacing: 12) {
+            if !shown.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "play.rectangle.on.rectangle.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.red)
+                    Text("Shorts").font(.title3.weight(.bold))
+                }
+                .padding(.horizontal, 16)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: sizeClass == .regular ? 6 : 2),
+                          spacing: 10) {
+                    ForEach(shown) { item in
+                        Button {
+                            ShortsRouter.shared.request = .init(items: list, start: item.id)
+                        } label: {
+                            tile(item)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+        }
+        .padding(.vertical, 6)
+        .task { await model.load() }
+    }
+
+    private func tile(_ item: VideoItem) -> some View {
+        Color(.tertiarySystemFill)
+            .aspectRatio(9 / 16, contentMode: .fit)
+            .overlay {
+                AsyncImage(url: URL(string: "https://i.ytimg.com/vi/\(item.id)/oar2.jpg")) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else if phase.error != nil {
+                        AsyncImage(url: item.bestThumbnail) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: { Color(.tertiarySystemFill) }
+                    } else {
+                        Color(.tertiarySystemFill)
+                    }
+                }
+            }
+            .overlay {
+                LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
+            }
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if let views = item.views {
+                        Text(views).font(.caption2).opacity(0.85)
+                    }
+                }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.5), radius: 3)
+                .padding(10)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
     }
 }
