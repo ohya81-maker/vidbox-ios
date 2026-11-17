@@ -25,6 +25,8 @@ struct PlayerView: View {
     @State private var scrollY: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
     @ObservedObject private var blocklist = Blocklist.shared
+    /// 세로 화면에서 아래 목록을 끝까지 당겨 내리면: 영상만 화면 가운데 (YouTube처럼). 위로 쓸면 원래대로
+    @State private var focusMode = false
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -58,6 +60,8 @@ struct PlayerView: View {
                             // 아이패드 가로(넓은 화면): YouTube처럼 왼쪽 약 2/3에 영상·정보·댓글, 오른쪽에 다음 영상
                             if UIDevice.current.userInterfaceIdiom == .pad && geo.size.width >= 900 {
                                 wide(size: geo.size)
+                            } else if focusMode {
+                                focusView(size: geo.size)
                             } else {
                                 portrait(width: geo.size.width)
                             }
@@ -78,6 +82,30 @@ struct PlayerView: View {
         .sheet(isPresented: $showSave) {
             if let item = player.current { SaveToFolderSheet(item: item) }
         }
+    }
+
+    /// 영상만 보기: 검은 화면 가운데에 영상. 다시 아래로 당기거나 위로 쓸면 원래 화면
+    private func focusView(size: CGSize) -> some View {
+        let aspect = player.audioOnly ? 16 / 9 : min(16 / 9, max(player.videoAspect, 0.5))
+        let height = min(size.width / aspect, size.height * 0.92)
+        return ZStack {
+            Color.black.ignoresSafeArea()
+            PlayerStage(fullscreen: false, height: height, expanded: true)
+                .frame(width: size.width, height: height)
+        }
+        .frame(width: size.width, height: size.height)
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 25, coordinateSpace: .global)
+                .onEnded { v in
+                    // 다시 아래로 당기거나 위로 쓸면 원래 화면으로
+                    let dy = v.translation.height
+                    if abs(dy) > 60, abs(dy) > abs(v.translation.width) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { focusMode = false }
+                    }
+                }
+        )
+        .onDisappear { focusMode = false }
     }
 
     /// 세로 영상(쇼츠형)은 처음엔 화면을 크게 채우고, 아래 목록을 위로 쓸어 올리면
@@ -104,6 +132,11 @@ struct PlayerView: View {
                         geo.contentOffset.y + geo.contentInsets.top
                     } action: { _, y in
                         scrollY = y
+                        // 맨 위에서 더 아래로 크게 당기면 영상만 보기
+                        if y < -110, !focusMode, !showComments {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { focusMode = true }
+                        }
                     }
                     .onChange(of: item.id) { _, _ in
                         proxy.scrollTo("top", anchor: .top)
