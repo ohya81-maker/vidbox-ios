@@ -801,6 +801,7 @@ struct ShortsProgressBar: View {
     @State private var duration: Double = 0
     @State private var dragging: Double?
     @State private var observer: Any?
+    @State private var observedPlayer: AVPlayer?
 
     var body: some View {
         GeometryReader { g in
@@ -853,10 +854,13 @@ struct ShortsProgressBar: View {
         .animation(.easeOut(duration: 0.15), value: dragging == nil)
         .onAppear { attach() }
         .onDisappear { detach() }
+        // 같은 쇼츠라도 플레이어가 새로 만들어지면 새 플레이어에 다시 붙인다
+        .onChange(of: ObjectIdentifier(player)) { _, _ in attach() }
     }
 
     private func attach() {
         detach()
+        observedPlayer = player
         observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { t in
             let total = player.currentItem?.duration.seconds ?? 0
             if total.isFinite, total > 0 {
@@ -866,9 +870,11 @@ struct ShortsProgressBar: View {
         }
     }
 
+    /// 관찰자는 「붙인 그 플레이어」에서 떼야 한다 (다른 플레이어에서 떼면 앱이 종료됨)
     private func detach() {
-        if let observer { player.removeTimeObserver(observer) }
+        if let observer, let observedPlayer { observedPlayer.removeTimeObserver(observer) }
         observer = nil
+        observedPlayer = nil
     }
 
     static func clock(_ s: Double) -> String {
