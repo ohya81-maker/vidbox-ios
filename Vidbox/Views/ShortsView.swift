@@ -385,8 +385,19 @@ final class ShortsPlayer: ObservableObject {
 
 // MARK: - 쇼츠 화면 (세로 페이징)
 
+/// 홈의 Shorts 줄에서 누른 쇼츠: 홈 화면 안에서 그대로 재생 (Shorts 탭으로 넘어가지 않음)
+struct ShortsSeed: Hashable {
+    let items: [VideoItem]
+    let start: String
+}
+
 struct ShortsView: View {
     let isActive: Bool
+    /// 홈에서 밀어 넣은 쇼츠 화면이면 그 목록부터 (오른쪽으로 쓸면 홈으로 돌아감)
+    var seed: ShortsSeed? = nil
+    @Environment(\.dismiss) private var dismiss
+    /// 왼쪽으로 쓸어 들어가는 채널 화면
+    @State private var channelPush: ChannelRoute?
     @StateObject private var feed = ShortsFeed()
     @StateObject private var shorts = ShortsPlayer()
     @EnvironmentObject private var player: PlayerManager
@@ -455,6 +466,17 @@ struct ShortsView: View {
         // YouTube 쇼츠처럼 위쪽 줄 오른쪽에 돋보기 (영상은 이 줄 아래부터라 겹치지 않음)
         .overlay(alignment: .top) {
             HStack {
+                if seed != nil {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("홈으로")
+                }
                 Spacer()
                 SearchIconButton(dark: true)
             }
@@ -478,9 +500,26 @@ struct ShortsView: View {
             }
         }
         .environment(\.colorScheme, .dark)
-        .onChange(of: router.request) { _, r in if let r { open(r) } }
+        // YouTube처럼: 오른쪽으로 쓸면 홈으로(홈에서 연 쇼츠), 왼쪽으로 쓸면 이 쇼츠의 채널
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { v in
+                    let dx = v.translation.width, dy = v.translation.height
+                    guard abs(dx) > abs(dy) * 1.5, abs(dx) > 80,
+                          Date().timeIntervalSince(ShortsProgressBar.lastScrub) > 0.5 else { return }
+                    if dx < 0 { openChannel() } else if seed != nil { dismiss() }
+                }
+        )
+        .navigationDestination(item: $channelPush) { r in
+            ChannelView(channelID: r.id, fallbackName: r.name, fallbackAvatar: r.avatar, fromShorts: true)
+        }
+        .onChange(of: router.request) { _, r in if let r, seed == nil { open(r) } }
         .task {
-            if let r = router.request { open(r) }
+            if let seed, feed.items.isEmpty {
+                feed.prepend(seed.items)
+                currentID = seed.start
+                scrollID = seed.start
+            } else if let r = router.request, seed == nil { open(r) }
             await feed.loadInitial()
             // 첫 쇼츠들의 재생 주소를 바로 미리 받아 둔다 (탭을 열자마자 시작되게)
             let first = Array(feed.items.prefix(3).map(\.id))
@@ -503,6 +542,16 @@ struct ShortsView: View {
         .onChange(of: feed.items.count) { old, _ in
             if old == 0, currentID == nil { currentID = feed.items.first?.id }
         }
+    }
+
+    /// 지금 쇼츠의 채널로
+    private func openChannel() {
+        guard let id = currentID, let item = feed.items.first(where: { $0.id == id }) else { return }
+        let info = ShortInfoCache.shared.get(id)
+        let cid = info?.channelID.isEmpty == false ? info!.channelID : item.channelID
+        guard let cid, !cid.isEmpty else { return }
+        channelPush = ChannelRoute(id: cid, name: info?.channelName ?? item.channel,
+                                   avatar: info?.channelAvatar ?? item.channelThumbnail, shorts: true)
     }
 
     /// 홈에서 누른 쇼츠부터 보기
@@ -745,6 +794,8 @@ final class ShortInfoCache {
 
 /// 쇼츠 진행 막대: 평소엔 얇은 선, 누르고 끄는 동안 두꺼워지고 시간 표시
 struct ShortsProgressBar: View {
+    /// 진행 막대를 끈 때 (그 끌기로 채널·홈 이동이 되지 않게)
+    @MainActor static var lastScrub = Date.distantPast
     let player: AVPlayer
     @State private var progress: Double = 0
     @State private var duration: Double = 0
@@ -783,10 +834,12 @@ struct ShortsProgressBar: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
+                        Self.lastScrub = Date()
                         guard duration > 0, g.size.width > 0 else { return }
                         dragging = min(1, max(0, v.location.x / g.size.width))
                     }
                     .onEnded { _ in
+                        Self.lastScrub = Date()
                         if let d = dragging, duration > 0 {
                             progress = d
                             player.seek(to: CMTime(seconds: d * duration, preferredTimescale: 600),
@@ -877,9 +930,7 @@ struct ShortsShelf: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: sizeClass == .regular ? 6 : 2),
                           spacing: 10) {
                     ForEach(shown) { item in
-                        Button {
-                            ShortsRouter.shared.request = .init(items: list, start: item.id)
-                        } label: {
+                        NavigationLink(value: ShortsSeed(items: list, start: item.id)) {
                             tile(item)
                         }
                         .buttonStyle(.plain)

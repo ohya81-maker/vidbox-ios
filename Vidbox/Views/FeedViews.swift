@@ -308,6 +308,11 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task(id: account.revision) { await loadSelected() }
             .profileDestinations()
+            // 홈 Shorts 줄에서 누른 쇼츠: 홈 안에서 재생
+            .navigationDestination(for: ShortsSeed.self) { seed in
+                ShortsView(isActive: true, seed: seed)
+                    .toolbar(.hidden, for: .navigationBar)
+            }
             .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
             .channelDestination()
         }
