@@ -27,6 +27,8 @@ struct PlayerView: View {
     @ObservedObject private var blocklist = Blocklist.shared
     /// 세로 화면에서 아래 목록을 끝까지 당겨 내리면: 영상만 화면 가운데 (YouTube처럼). 위로 쓸면 원래대로
     @State private var focusMode = false
+    /// 영상만 보기에서 손가락을 따라 움직인 거리
+    @State private var focusDrag: CGFloat = 0
 
     var body: some View {
         // 화면이 가로가 되면(폰을 돌리거나 전체화면 버튼) 영상만 꽉 차게
@@ -60,10 +62,8 @@ struct PlayerView: View {
                             // 아이패드 가로(넓은 화면): YouTube처럼 왼쪽 약 2/3에 영상·정보·댓글, 오른쪽에 다음 영상
                             if UIDevice.current.userInterfaceIdiom == .pad && geo.size.width >= 900 {
                                 wide(size: geo.size)
-                            } else if focusMode {
-                                focusView(size: geo.size)
                             } else {
-                                portrait(width: geo.size.width)
+                                portrait(size: geo.size)
                             }
                         }
                             .toolbar(.hidden, for: .navigationBar)
@@ -84,38 +84,27 @@ struct PlayerView: View {
         }
     }
 
-    /// 영상만 보기: 검은 화면 가운데에 영상. 다시 아래로 당기거나 위로 쓸면 원래 화면
-    private func focusView(size: CGSize) -> some View {
-        let aspect = player.audioOnly ? 16 / 9 : min(16 / 9, max(player.videoAspect, 0.5))
-        let height = min(size.width / aspect, size.height * 0.92)
-        return ZStack {
-            Color.black.ignoresSafeArea()
-            PlayerStage(fullscreen: false, height: height, expanded: true)
-                .frame(width: size.width, height: height)
-        }
-        .frame(width: size.width, height: size.height)
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 25, coordinateSpace: .global)
-                .onEnded { v in
-                    // 다시 아래로 당기거나 위로 쓸면 원래 화면으로
-                    let dy = v.translation.height
-                    if abs(dy) > 60, abs(dy) > abs(v.translation.width) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { focusMode = false }
-                    }
-                }
-        )
-        .onDisappear { focusMode = false }
-    }
-
     /// 세로 영상(쇼츠형)은 처음엔 화면을 크게 채우고, 아래 목록을 위로 쓸어 올리면
     /// YouTube처럼 재생 화면이 16:9 크기까지 줄어들며 목록이 따라 올라온다.
-    private func portrait(width: CGFloat) -> some View {
+    private func portrait(size: CGSize) -> some View {
+        let width = size.width
         let aspect = player.audioOnly ? 16 / 9 : min(16 / 9, max(player.videoAspect, 0.65))
         let tallHeight = width / aspect
         let compactHeight = min(tallHeight, width * 9 / 16)
         let stageHeight = showComments ? compactHeight : max(compactHeight, tallHeight - max(0, scrollY))
+        // 아래 목록을 맨 위에서 더 당긴 만큼 (영상이 손가락을 따라 내려온다)
+        let pull = showComments || focusMode ? 0 : max(0, -scrollY)
+        // 영상만 보기: 화면 가운데
+        let focusHeight = min(tallHeight, size.height * 0.92)
+        let centerY = max(0, (size.height - focusHeight) / 2)
+        let dark = focusMode || pull > 0
         return ZStack(alignment: .top) {
+            // 당기는 만큼 바탕이 검게 (영상만 보기에서는 완전히 검게)
+            Color.black
+                .opacity(focusMode ? 1 : min(1, pull / 120))
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
             if let item = player.current {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -132,12 +121,16 @@ struct PlayerView: View {
                         geo.contentOffset.y + geo.contentInsets.top
                     } action: { _, y in
                         scrollY = y
-                        // 맨 위에서 더 아래로 크게 당기면 영상만 보기
-                        if y < -110, !focusMode, !showComments {
+                    }
+                    // 맨 위에서 충분히 당겼다 놓으면 영상이 자연스럽게 화면 가운데로
+                    .onScrollPhaseChange { old, new in
+                        if old == .interacting, new != .interacting, scrollY < -80, !focusMode, !showComments {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { focusMode = true }
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { focusMode = true }
                         }
                     }
+                    .opacity(focusMode ? 0 : max(0, 1 - pull / 160))
+                    .allowsHitTesting(!focusMode)
                     .onChange(of: item.id) { _, _ in
                         proxy.scrollTo("top", anchor: .top)
                     }
@@ -146,8 +139,11 @@ struct PlayerView: View {
                 Spacer()
             }
 
-            PlayerStage(fullscreen: false, height: stageHeight, expanded: stageHeight >= tallHeight - 1)
+            PlayerStage(fullscreen: false, height: focusMode ? focusHeight : stageHeight,
+                        expanded: focusMode || stageHeight >= tallHeight - 1)
                 .animation(.easeInOut(duration: 0.25), value: tallHeight)
+                // 당기는 동안 손가락을 따라 내려오고, 영상만 보기에서는 가운데 (끌면 따라 움직임)
+                .offset(y: focusMode ? centerY + focusDrag : pull)
                 .zIndex(1)
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 20, coordinateSpace: .global)
@@ -159,7 +155,8 @@ struct PlayerView: View {
                         .onEnded { value in
                             if value.translation.height > 120 { player.isExpanded = false }
                             withAnimation(.spring) { dragOffset = 0 }
-                        }
+                        },
+                    including: focusMode ? .subviews : .all
                 )
 
             // 댓글: YouTube처럼 영상은 위에서 계속 재생되고, 그 아래를 댓글 창이 채운다
@@ -196,9 +193,29 @@ struct PlayerView: View {
             // 위로 올린 목록이 상단 시계(상태 표시줄) 영역으로 비쳐 보이지 않게 덮는다
             Color.clear
                 .frame(height: 0)
-                .background(Color(.systemBackground), ignoresSafeAreaEdges: .top)
+                .background(dark ? Color.black : Color(.systemBackground), ignoresSafeAreaEdges: .top)
                 .zIndex(2)
         }
+        .frame(width: size.width, height: size.height, alignment: .top)
+        .contentShape(Rectangle())
+        // 영상만 보기: 위아래로 끌면 영상이 따라오고, 충분히 끌고 놓으면 원래 자리로 부드럽게
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                .onChanged { v in
+                    guard focusMode, abs(v.translation.height) > abs(v.translation.width) else { return }
+                    focusDrag = v.translation.height
+                }
+                .onEnded { v in
+                    guard focusMode else { return }
+                    let dy = v.translation.height
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                        if abs(dy) > 70 { focusMode = false }
+                        focusDrag = 0
+                    }
+                },
+            including: focusMode ? .all : .subviews
+        )
+        .onDisappear { focusMode = false; focusDrag = 0 }
     }
 
     private func exitFullscreen() {
