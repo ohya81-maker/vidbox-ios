@@ -1421,7 +1421,8 @@ struct JellyfinPlaybackSettings: View {
     @Environment(\.dismiss) private var dismiss
     @State private var quality = JFQuality.current
     @AppStorage("subtitleScale") private var subtitleScale: Double = 1.0
-    /// 위쪽 가로 탭: 자막 · 음성 · 화질
+    @AppStorage("mediaFit") private var mediaFit = 1
+    /// 위쪽 가로 탭: 자막 · 음성 · 화질 · 화면
     @State private var page = 0
 
     var body: some View {
@@ -1433,6 +1434,7 @@ struct JellyfinPlaybackSettings: View {
                     Text("자막").tag(0)
                     if hasAudio { Text("음성").tag(1) }
                     Text("화질 · \(quality.short)").tag(2)
+                    Text("화면").tag(3)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
@@ -1440,6 +1442,16 @@ struct JellyfinPlaybackSettings: View {
 
                 List {
                     switch page {
+                    case 3:
+                        Section {
+                            row("원본 비율 (전체가 보이게)", selected: mediaFit == 0) { mediaFit = 0; dismiss() }
+                            row("화면 채우기 (가장자리가 조금 잘림)", selected: mediaFit == 1) { mediaFit = 1; dismiss() }
+                            row("확대 (영화의 위아래 검은 띠까지 채움)", selected: mediaFit == 2) { mediaFit = 2; dismiss() }
+                        } header: {
+                            Text("전체화면에서 영상 크기")
+                        } footer: {
+                            Text("폰·아이패드 화면 비율에 맞춰 채워요. 바로 적용돼요.")
+                        }
                     case 1:
                         Section("음성") {
                             ForEach(choice?.audioTracks ?? []) { t in
