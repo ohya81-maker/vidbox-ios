@@ -518,6 +518,8 @@ struct ResumeCard: View {
             }
             .frame(width: width, height: height)
             .clipped()
+            // 미리보기 묶음 이미지는 잘려 보여도 터치 영역이 옆 카드까지 넘친다 → 터치는 카드 크기로만
+            .allowsHitTesting(false)
             .overlay(alignment: .bottom) { ProgressStrip(progress: item.progress) }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
@@ -526,6 +528,7 @@ struct ResumeCard: View {
             Text(remaining).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 .frame(width: width, alignment: .leading)
         }
+        .contentShape(Rectangle())
     }
 
     private var fallback: some View {

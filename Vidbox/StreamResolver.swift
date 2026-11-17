@@ -97,12 +97,14 @@ actor StreamResolver {
     static let blockedUntil = BlockClock()
 
     func prefetch(_ ids: [String]) {
-        if Self.blockedUntil.isBlocked { return }
-        for id in ids where !id.hasPrefix("jf:") {
+        // 차단 응답 뒤에도 바로 다음 1개만은 천천히 미리 받는다 (넘길 때마다 처음부터 받느라 멈칫하지 않게)
+        let blocked = Self.blockedUntil.isBlocked
+        let targets = blocked ? Array(ids.prefix(1)) : ids
+        for id in targets where !id.hasPrefix("jf:") {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
             guard inflight[id] == nil, prefetching < 3 else { continue }
             prefetchTimes = prefetchTimes.filter { Date().timeIntervalSince($0) < 20 }
-            guard prefetchTimes.count < 8 else { return }
+            guard prefetchTimes.count < (blocked ? 3 : 8) else { return }
             prefetchTimes.append(Date())
             prefetching += 1
             Task {
@@ -138,6 +140,14 @@ actor StreamResolver {
         }
         let task = Task<Entry, Error> {
             if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
+            // 「봇 확인」 응답은 잠깐씩 섞여 온다 → 느린 방법(4~5초)으로 가기 전에 한 번만 빨리 다시
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if let again = try? await Self.fetchFromInnerTube(id: id) { return again }
+            // 그래도 막히면 Android 앱 방식(360p 합본)으로 — 빠르고, 봇 확인에 덜 걸린다
+            if let muxed = try? await Self.fetchAndroidMuxed(id: id) {
+                PlaybackDiag.note("fallback android-muxed \(id)")
+                return Entry(video: [.single(muxed)], audio: [], date: Date())
+            }
             return try await Self.fetchWithYouTubeKit(id: id)
         }
         inflight[id] = task
@@ -188,7 +198,7 @@ actor StreamResolver {
               let streaming = json["streamingData"] as? [String: Any]
         else {
             PlaybackDiag.note("player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")")
-            if playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 10) }
+            if playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 2) }
             throw AppError.noPlayableStream
         }
 

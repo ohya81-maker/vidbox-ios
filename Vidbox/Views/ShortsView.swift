@@ -583,7 +583,7 @@ struct ShortsView: View {
         let upcoming = feed.items.dropFirst(index + 1).prefix(4).map(\.id)
         shorts.play(feed.items[index], previous: previous, upcoming: upcoming)
         // 채널 이름·구독 버튼: 지금 것과 다음 두 개를 미리 받아 둔다 (넘기자마자 바로 보이게)
-        ShortInfoCache.shared.prefetch([id] + upcoming.prefix(2))
+        ShortInfoCache.shared.prefetch([id] + upcoming.prefix(1))
         feed.markSeen(id)
     }
 }
