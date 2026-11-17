@@ -421,9 +421,6 @@ struct PlayerView: View {
                         Image(systemName: liked ? "hand.thumbsup.fill" : "hand.thumbsup")
                             .font(.system(size: 19, weight: .regular))
                             .symbolEffect(.bounce, value: liked)
-                        if let count = player.watchInfo?.likeCount, !count.isEmpty {
-                            Text(count).font(.footnote.weight(.semibold)).monospacedDigit()
-                        }
                     }
                     .foregroundStyle(Color.primary)
                     .frame(minWidth: 38, minHeight: 38)
