@@ -411,6 +411,8 @@ struct ShortsView: View {
     @Environment(\.scenePhase) private var scenePhase
     /// 백그라운드로 갈 때 재생 중이었는지 (돌아오면 이어서)
     @State private var pausedForBackground = false
+    /// 재생이 안 되는 쇼츠를 건너뛰었다는 짧은 안내
+    @State private var skipNotice = false
     /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
     @Environment(\.colorScheme) private var appScheme
     @ObservedObject private var search = SearchRouter.shared
@@ -517,6 +519,35 @@ struct ShortsView: View {
             ChannelView(channelID: r.id, fallbackName: r.name, fallbackAvatar: r.avatar, fromShorts: true)
         }
         .onChange(of: router.request) { _, r in if let r, seed == nil { open(r) } }
+        // 재생할 수 없는 쇼츠(YouTube 봇 확인 등)는 오류 화면 대신 다음 쇼츠로 자동으로 넘긴다
+        .onChange(of: shorts.failed) { _, failed in
+            guard failed, isActive, !pushedAway, let failedID = currentID else { return }
+            Task {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard shorts.failed, currentID == failedID else { return }
+                let list = Blocklist.shared.filter(feed.items)
+                guard let i = list.firstIndex(where: { $0.id == failedID }), i + 1 < list.count else { return }
+                let next = list[i + 1].id
+                withAnimation(.easeInOut(duration: 0.35)) { scrollID = next }
+                currentID = next
+                withAnimation { skipNotice = true }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                withAnimation { skipNotice = false }
+            }
+        }
+        .overlay(alignment: .top) {
+            if skipNotice {
+                Text("재생할 수 없는 쇼츠라 다음으로 넘겼어요")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.black.opacity(0.65), in: Capsule())
+                    .padding(.top, 56)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
+            }
+        }
         // 쇼츠는 앱을 나가면(홈 화면·잠금) 멈춘다 — 돌아오면 이어서
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
