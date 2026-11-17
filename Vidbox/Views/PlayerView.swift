@@ -1386,46 +1386,65 @@ struct JellyfinPlaybackSettings: View {
     @Environment(\.dismiss) private var dismiss
     @State private var quality = JFQuality.current
     @AppStorage("subtitleScale") private var subtitleScale: Double = 1.0
+    /// 위쪽 가로 탭: 자막 · 음성 · 화질
+    @State private var page = 0
 
     var body: some View {
         let choice = JellyfinCatalog.shared.choice(for: videoID)
+        let hasAudio = (choice?.audioTracks.count ?? 0) > 1
         NavigationStack {
-            List {
-                Section("자막 크기") {
-                    Picker("자막 크기", selection: $subtitleScale) {
-                        Text("작게").tag(0.8)
-                        Text("보통").tag(1.0)
-                        Text("크게").tag(1.3)
-                        Text("아주 크게").tag(1.6)
-                    }
-                    .pickerStyle(.segmented)
+            VStack(spacing: 0) {
+                Picker("설정", selection: $page) {
+                    Text("자막").tag(0)
+                    if hasAudio { Text("음성").tag(1) }
+                    Text("화질 · \(quality.short)").tag(2)
                 }
-                Section("자막") {
-                    row("끄기", selected: choice?.subtitleIndex == nil) { apply(subtitle: -1) }
-                    ForEach(choice?.subtitleTracks ?? []) { t in
-                        row(t.title, selected: choice?.subtitleIndex == t.index) { apply(subtitle: t.index) }
-                    }
-                }
-                if (choice?.audioTracks.count ?? 0) > 1 {
-                    Section("음성") {
-                        ForEach(choice?.audioTracks ?? []) { t in
-                            row(t.title, selected: choice?.audioIndex == t.index) { apply(audio: t.index) }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                List {
+                    switch page {
+                    case 1:
+                        Section("음성") {
+                            ForEach(choice?.audioTracks ?? []) { t in
+                                row(t.title, selected: choice?.audioIndex == t.index) { apply(audio: t.index) }
+                            }
+                        }
+                    case 2:
+                        Section {
+                            ForEach(JFQuality.allCases) { q in
+                                row(q.label, selected: quality == q) {
+                                    JFQuality.current = q
+                                    quality = q
+                                    PlayerManager.shared.reloadKeepingPosition()
+                                    dismiss()
+                                }
+                            }
+                        } footer: {
+                            Text("화질은 모든 미디어 영상에 적용돼요.")
+                        }
+                    default:
+                        Section("자막 크기") {
+                            Picker("자막 크기", selection: $subtitleScale) {
+                                Text("작게").tag(0.8)
+                                Text("보통").tag(1.0)
+                                Text("크게").tag(1.3)
+                                Text("아주 크게").tag(1.6)
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        Section {
+                            row("끄기", selected: choice?.subtitleIndex == nil) { apply(subtitle: -1) }
+                            ForEach(choice?.subtitleTracks ?? []) { t in
+                                row(t.title, selected: choice?.subtitleIndex == t.index) { apply(subtitle: t.index) }
+                            }
+                        } header: {
+                            Text("자막")
+                        } footer: {
+                            Text("처음 값은 Jellyfin 계정 설정(자막 모드·선호 언어)을 따릅니다.")
                         }
                     }
-                }
-                Section {
-                    ForEach(JFQuality.allCases) { q in
-                        row(q.label, selected: quality == q) {
-                            JFQuality.current = q
-                            quality = q
-                            PlayerManager.shared.reloadKeepingPosition()
-                            dismiss()
-                        }
-                    }
-                } header: {
-                    Text("화질")
-                } footer: {
-                    Text("처음 값은 Jellyfin 계정 설정(자막 모드·선호 언어)을 따릅니다. 화질은 모든 미디어 영상에 적용돼요.")
                 }
             }
             .navigationTitle("재생 설정")

@@ -538,6 +538,16 @@ enum JFQuality: Int, CaseIterable, Identifiable {
         case .low: return "최대 1.2Mbps (데이터 절약)"
         }
     }
+    /// 탭 제목용 짧은 이름
+    var short: String {
+        switch self {
+        case .original: return "원본"
+        case .high: return "20M"
+        case .hd: return "1080p"
+        case .sd: return "720p"
+        case .low: return "절약"
+        }
+    }
     static var current: JFQuality {
         get { JFQuality(rawValue: UserDefaults.standard.integer(forKey: "jf.maxBitrate")) ?? .original }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "jf.maxBitrate") }
