@@ -408,6 +408,9 @@ struct ShortsView: View {
     /// 채널 화면으로 넘어가 있는 동안
     @State private var pushedAway = false
     @ObservedObject private var router = ShortsRouter.shared
+    @Environment(\.scenePhase) private var scenePhase
+    /// 백그라운드로 갈 때 재생 중이었는지 (돌아오면 이어서)
+    @State private var pausedForBackground = false
     /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
     @Environment(\.colorScheme) private var appScheme
     @ObservedObject private var search = SearchRouter.shared
@@ -514,6 +517,16 @@ struct ShortsView: View {
             ChannelView(channelID: r.id, fallbackName: r.name, fallbackAvatar: r.avatar, fromShorts: true)
         }
         .onChange(of: router.request) { _, r in if let r, seed == nil { open(r) } }
+        // 쇼츠는 앱을 나가면(홈 화면·잠금) 멈춘다 — 돌아오면 이어서
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                if isActive && !pushedAway && !shorts.isPaused { pausedForBackground = true }
+                shorts.pause()
+            } else if phase == .active, pausedForBackground {
+                pausedForBackground = false
+                if isActive && !pushedAway && !player.isPlaying { shorts.resume() }
+            }
+        }
         .task {
             if let seed, feed.items.isEmpty {
                 feed.prepend(seed.items)
@@ -584,6 +597,9 @@ struct ShortPage: View {
     @State private var showSave = false
     /// 채널(구독) 정보: 지금 보는 쇼츠만 가져온다 (한 번 받은 것은 기억)
     @State private var info: WatchInfo?
+    @State private var commentPage: CommentPage?
+    @State private var showComments = false
+    @ObservedObject private var likes = LikeStore.shared
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlayerManager
 
@@ -660,6 +676,13 @@ struct ShortPage: View {
             if let got = await ShortInfoCache.shared.load(item.id) { info = got }
         }
         .sheet(isPresented: $showSave) { SaveToFolderSheet(item: item) }
+        .sheet(isPresented: $showComments) {
+            if let page = commentPage {
+                CommentsPanel(first: page, onClose: { showComments = false }, video: item)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
         .overlay(alignment: .bottom) {
             HStack(alignment: .bottom, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -709,6 +732,13 @@ struct ShortPage: View {
                 }
                 Spacer(minLength: 0)
                 VStack(spacing: 18) {
+                    let liked = info?.liked ?? likes.isLiked(item.id)
+                    sideButton(liked ? "hand.thumbsup.fill" : "hand.thumbsup", label: info?.likeCount ?? "좋아요") {
+                        toggleLike()
+                    }
+                    sideButton("text.bubble", label: commentCount ?? "댓글") {
+                        openComments()
+                    }
                     sideButton(library.isInAnyFolder(item) ? "checkmark.circle.fill" : "plus.circle", label: "저장") {
                         showSave = true
                     }
@@ -736,6 +766,37 @@ struct ShortPage: View {
                         .padding(.bottom, bottomInset + 2)
                 }
             }
+        }
+    }
+
+    private var commentCount: String? {
+        guard let text = commentPage?.countText else { return nil }
+        let t = text.replacingOccurrences(of: "댓글", with: "").trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : t
+    }
+
+    private func toggleLike() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let on = !(info?.liked ?? likes.isLiked(item.id))
+        likes.set(item, on)
+        if info?.liked != nil { info?.liked = on }
+        if AuthStore.shared.isLoggedIn {
+            Task { try? await InnerTubeClient.shared.setLiked(item.id, on) }
+        }
+    }
+
+    private func openComments() {
+        if commentPage != nil { showComments = true; return }
+        Task {
+            if info == nil { info = await ShortInfoCache.shared.load(item.id) }
+            guard let token = info?.commentsToken,
+                  let page = try? await InnerTubeClient.shared.comments(token) else {
+                commentPage = CommentPage(comments: [], next: nil, countText: nil)
+                showComments = true
+                return
+            }
+            commentPage = page
+            showComments = true
         }
     }
 

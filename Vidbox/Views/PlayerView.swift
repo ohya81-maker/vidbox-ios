@@ -1101,6 +1101,20 @@ struct CommentsPanel: View {
     /// 상단바를 위/아래로 끄는 중 (위로 올리면 화면 전체, 내리면 원래 크기·닫기)
     var onDrag: (CGFloat) -> Void = { _ in }
     var onDragEnd: (CGFloat) -> Void = { _ in }
+    /// 이 댓글이 달린 영상 (쇼츠에서 열 때). 없으면 지금 재생 중인 영상
+    var video: VideoItem? = nil
+
+    // 다른 파일(쇼츠)에서도 만들 수 있게 직접 만든 init (private 상태값 때문에 자동 init은 파일 안에서만 보인다)
+    init(first: CommentPage, onClose: @escaping () -> Void,
+         onDrag: @escaping (CGFloat) -> Void = { _ in },
+         onDragEnd: @escaping (CGFloat) -> Void = { _ in },
+         video: VideoItem? = nil) {
+        self.first = first
+        self.onClose = onClose
+        self.onDrag = onDrag
+        self.onDragEnd = onDragEnd
+        self.video = video
+    }
     @EnvironmentObject private var account: AccountStore
     @State private var comments: [Comment] = []
     @State private var next: String?
@@ -1240,7 +1254,7 @@ struct CommentsPanel: View {
         defer { sending = false }
         do {
             try await InnerTubeClient.shared.postComment(text, params: params)
-            if let video = PlayerManager.shared.current { CommentLog.shared.add(video, text) }
+            if let video = video ?? PlayerManager.shared.current { CommentLog.shared.add(video, text) }
             comments.insert(Comment(id: UUID().uuidString, author: account.handle ?? account.name ?? "나",
                                     avatar: account.avatar, text: text, published: "방금 전"), at: 0)
             draft = ""
