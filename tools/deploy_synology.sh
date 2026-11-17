@@ -16,7 +16,8 @@ APK="${KTUBE_APK:-../ktube-android/KTUBE.apk}"
 cd "$(dirname "$0")/.."
 
 if [ "${1:-}" != "--local" ]; then
-  tag=$(gh release list -L 1 --json tagName -q '.[0].tagName')
+  # 여러 빌드가 동시에 끝나도 빌드 번호가 가장 큰 릴리스를 고른다 (만든 순서가 아니라)
+  tag=$(gh release list -L 15 --json tagName -q '.[].tagName' | grep -E '^build-[0-9]+$' | sort -t- -k2 -n | tail -1)
   echo "최신 릴리스: $tag"
   # 유료 계정 서명본이 있으면 그것을(Safari에서 바로 설치), 없으면 서명 안 된 IPA(SideStore용)
   if gh release view "$tag" --json assets -q '.assets[].name' | grep -qx "KTUBE-signed.ipa"; then
