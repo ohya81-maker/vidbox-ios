@@ -588,6 +588,8 @@ struct PlayerStage: View {
     @State private var showControls = true
     @State private var scrubTime: Double?
     @State private var hideTask: Task<Void, Never>?
+    /// 미디어 전체화면 맞춤: 0 원본 비율 · 1 화면 채우기(기본) · 2 확대(영화 속 검은 띠까지)
+    @AppStorage("mediaFit") private var mediaFit = 1
 
     // 더블탭 탐색 피드백
     @State private var seekAmount = 0
@@ -612,7 +614,17 @@ struct PlayerStage: View {
             if player.audioOnly, let item = player.current {
                 audioArtwork(item)
             } else {
-                VideoSurface(manager: player, gravity: fillsStage ? .resizeAspectFill : .resizeAspect)
+                // 미디어 영상은 전체화면에서 설정대로 화면을 채운다 (기기 비율에 맞춰)
+                let fit = fullscreen && JellyfinCatalog.isJellyfin(player.current?.id ?? "") ? mediaFit : 0
+                GeometryReader { g in
+                    let screen = g.size.width / max(g.size.height, 1)
+                    VideoSurface(manager: player, gravity: fillsStage || fit > 0 ? .resizeAspectFill : .resizeAspect)
+                        // 확대: 2.39:1 영화의 위아래 검은 띠까지 화면 밖으로
+                        .scaleEffect(fit == 2 ? max(1, 2.39 / max(screen, 0.1)) : 1)
+                        .frame(width: g.size.width, height: g.size.height)
+                        .clipped()
+                        .animation(.easeInOut(duration: 0.25), value: fit)
+                }
             }
 
             // 영상 로딩 중에는 썸네일을 먼저 보여줘서 체감 지연을 줄임
