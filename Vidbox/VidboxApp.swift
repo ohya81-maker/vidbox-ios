@@ -159,7 +159,7 @@ private struct MiniPlayerInset: ViewModifier {
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 0) {
             // 하단 재생 막대 (영상은 막대 안에서 계속 재생)
-            if player.current != nil && player.miniPlayerEnabled {
+            if player.current != nil && player.keepsPlayingWhenClosed {
                 MiniPlayerView()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }

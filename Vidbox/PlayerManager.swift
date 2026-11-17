@@ -66,7 +66,7 @@ final class PlayerManager: ObservableObject {
             if !isExpanded && isFullscreen { setFullscreen(false) }
             if oldValue != isExpanded { updateRotationPolicy() }
             // 하단 재생 막대를 끈 상태에서 재생 화면을 내리면 재생을 끝낸다
-            if oldValue && !isExpanded && !miniPlayerEnabled && current != nil && !reopening { stop() }
+            if oldValue && !isExpanded && !keepsPlayingWhenClosed && current != nil && !reopening { stop() }
         }
     }
     private var reopening = false
@@ -78,13 +78,22 @@ final class PlayerManager: ObservableObject {
         reopening = false
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self.isExpanded = true }
     }
-    /// 재생 화면을 내렸을 때 하단 재생 막대로 계속 재생할지 (보관함 설정, 기본 꺼짐)
+    /// 영상: 재생 화면을 내렸을 때 하단 재생 막대로 계속 재생할지 (기본 꺼짐)
     @Published var miniPlayerEnabled: Bool = {
         PlayerManager.applyDefaultsOnce()
-        return UserDefaults.standard.bool(forKey: "miniPlayer")
+        return UserDefaults.standard.bool(forKey: "miniPlayerVideo")
     }() {
-        didSet { UserDefaults.standard.set(miniPlayerEnabled, forKey: "miniPlayer") }
+        didSet { UserDefaults.standard.set(miniPlayerEnabled, forKey: "miniPlayerVideo") }
     }
+    /// 음악(오디오 재생): 화면을 내려도 계속 재생 (기본 켜짐)
+    @Published var miniPlayerMusic: Bool = {
+        PlayerManager.applyDefaultsOnce()
+        return UserDefaults.standard.bool(forKey: "miniPlayerMusic")
+    }() {
+        didSet { UserDefaults.standard.set(miniPlayerMusic, forKey: "miniPlayerMusic") }
+    }
+    /// 지금 재생 중인 것(영상/음악)에 맞는 설정
+    var keepsPlayingWhenClosed: Bool { audioOnly ? miniPlayerMusic : miniPlayerEnabled }
     @Published private(set) var isFullscreen = false
     /// 음악 플레이어에서 「동영상」을 고른 상태 — 음악 플레이어 화면 그대로 앨범아트 자리에 영상
     @Published var musicVideoMode = false
@@ -102,10 +111,16 @@ final class PlayerManager: ObservableObject {
     /// 그 뒤 사용자가 바꾼 값은 그대로 둔다.
     nonisolated static func applyDefaultsOnce() {
         let d = UserDefaults.standard
-        guard d.integer(forKey: "defaultsVersion") < 2 else { return }
-        d.set(true, forKey: "miniPlayer")
-        d.set(false, forKey: "autoplay")
-        d.set(2, forKey: "defaultsVersion")
+        let v = d.integer(forKey: "defaultsVersion")
+        if v < 2 {
+            d.set(false, forKey: "autoplay")
+        }
+        if v < 3 {
+            // 「화면 내려도 계속 재생」을 영상/음악으로 나눔: 영상은 끄고 음악만 켠다
+            d.set(false, forKey: "miniPlayerVideo")
+            d.set(true, forKey: "miniPlayerMusic")
+            d.set(3, forKey: "defaultsVersion")
+        }
     }
 
     private var timeObserver: Any?

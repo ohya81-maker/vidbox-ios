@@ -96,21 +96,17 @@ struct LibraryView: View {
                 if !library.history.isEmpty { recentRow }
 
                 sectionTitle("재생 설정")
-                Toggle(isOn: $player.miniPlayerEnabled) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "rectangle.bottomhalf.inset.filled")
-                            .font(.system(size: 17, weight: .medium))
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("화면 내려도 계속 재생").font(.body.weight(.medium))
-                            Text("끄면 재생 화면을 내릴 때 재생을 멈춰요.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("화면 내려도 계속 재생 · 끄면 재생 화면을 내릴 때 멈춰요")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 4)
+                    settingToggle("영상", "play.rectangle", $player.miniPlayerEnabled)
+                    Divider().padding(.leading, 52)
+                    settingToggle("음악", "music.note", $player.miniPlayerMusic)
                 }
-                .tint(.green)
-                .padding(16)
                 .profileGlass()
 
                 sectionTitle("차단")
@@ -212,6 +208,20 @@ struct LibraryView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func settingToggle(_ title: String, _ icon: String, _ isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 24)
+                Text(title).font(.body.weight(.medium))
+            }
+        }
+        .tint(.green)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     private var rowDivider: some View {
