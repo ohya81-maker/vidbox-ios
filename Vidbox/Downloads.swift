@@ -325,6 +325,8 @@ final class DownloadManager: ObservableObject {
 // MARK: - 다운로드 목록 화면
 
 struct DownloadsView: View {
+    /// 보관함 › 저장 안에 넣어 보여줄 때
+    var embedded = false
     @ObservedObject private var downloads = DownloadManager.shared
     @EnvironmentObject private var player: PlayerManager
     @State private var filter: DownloadKind?
@@ -395,7 +397,7 @@ struct DownloadsView: View {
             let list = shown
             for i in offsets where i < list.count { downloads.delete(list[i]) }
         }
-        .navigationTitle("오프라인 저장")
+        .navigationTitle(embedded ? "저장" : "오프라인 저장")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

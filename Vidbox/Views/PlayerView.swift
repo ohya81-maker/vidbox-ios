@@ -12,6 +12,8 @@ struct PlayerView: View {
     @State private var showDownload = false
     /// 다운로드한 파일 삭제 전 확인
     @State private var pendingDeleteFile: DownloadedFile?
+    /// 받은 파일이 있는 곳 (보관함 › 저장 › 다운로드)
+    @State private var showSavedDownloads = false
     @State private var relatedFilter = 0
     @State private var showComments = false
     @State private var navPath = NavigationPath()
@@ -388,6 +390,21 @@ struct PlayerView: View {
                 } message: {
                     Text("받아 두면 인터넷 없이 재생할 수 있어요.")
                 }
+                .sheet(isPresented: $showSavedDownloads) {
+                    NavigationStack {
+                        SavedScreen(initial: .downloads)
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    Button { showSavedDownloads = false } label: { Image(systemName: "xmark") }
+                                        .accessibilityLabel("닫기")
+                                }
+                            }
+                            .navigationDestination(for: FolderRef.self) { ref in FolderDetailView(ref: ref) }
+                    }
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .onChange(of: player.current?.id) { _, _ in showSavedDownloads = false }
+                }
                 .alert("다운로드한 파일을 삭제할까요?", isPresented: Binding(
                     get: { pendingDeleteFile != nil }, set: { if !$0 { pendingDeleteFile = nil } }
                 ), presenting: pendingDeleteFile) { file in
@@ -432,7 +449,7 @@ struct PlayerView: View {
         ForEach([DownloadKind.video, .audio], id: \.self) { kind in
             let title = kind == .video ? "영상 (소리 포함, 720p)" : "음원만 (m4a)"
             if let file = downloads.file(item.id, kind) {
-                Button("\(kind.label) 삭제", role: .destructive) { pendingDeleteFile = file }
+                Button("\(kind.label) · 저장된 위치로 이동") { _ = file; showSavedDownloads = true }
             } else if downloads.isDownloading(item.id, kind) {
                 Button("\(kind.label) 다운로드 취소", role: .destructive) { downloads.cancel(item.id, kind) }
             } else {

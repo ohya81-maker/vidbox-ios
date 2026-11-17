@@ -39,7 +39,12 @@ struct RootView: View {
                 Label { Text("홈") } icon: { Image(uiImage: UIImage(systemName: tab == .home ? "house.fill" : "house")!) }
             }
             Tab(value: AppTab.shorts) {
-                ShortsView(isActive: tab == .shorts).environment(\.horizontalSizeClass, realSizeClass)
+                NavigationStack {
+                    ShortsView(isActive: tab == .shorts)
+                        .toolbar(.hidden, for: .navigationBar)
+                        .channelDestination()
+                }
+                .environment(\.horizontalSizeClass, realSizeClass)
             } label: {
                 // UIImage로 넘겨 탭바의 자동 채움(.fill)을 막는다: 선택 탭만 채운 아이콘
                 Label { Text("Shorts") } icon: { Image(uiImage: UIImage(systemName: tab == .shorts ? "play.rectangle.on.rectangle.fill" : "play.rectangle.on.rectangle")!) }

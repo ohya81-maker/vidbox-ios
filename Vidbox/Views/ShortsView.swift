@@ -388,6 +388,8 @@ struct ShortsView: View {
     /// 스크롤 위치 (넘기는 도중에도 바뀜). 재생할 쇼츠(currentID)는 넘김이 완전히 멈춘 뒤에 바꾼다 —
     /// 도중에 바꾸면 영상 교체·화면 갱신이 넘김 애니메이션과 겹쳐 '덜컹'하고 걸린다
     @State private var scrollID: String?
+    /// 채널 화면으로 넘어가 있는 동안
+    @State private var pushedAway = false
     /// 앱 전체 모드 (쇼츠 화면 자체는 어둡게 강제하므로 그 전에 읽어 둔다)
     @Environment(\.colorScheme) private var appScheme
     @ObservedObject private var search = SearchRouter.shared
@@ -477,6 +479,15 @@ struct ShortsView: View {
             if currentID == nil { currentID = feed.items.first?.id; scrollID = currentID }
         }
         .onChange(of: currentID) { _, _ in playCurrent() }
+        .onDisappear {
+            if isActive { pushedAway = true; shorts.pause() }
+        }
+        .onAppear {
+            if pushedAway {
+                pushedAway = false
+                if isActive && !player.isPlaying { shorts.resume() }
+            }
+        }
         .onChange(of: isActive) { _, active in
             if active { playCurrent() } else { shorts.pause() }
         }
@@ -589,8 +600,20 @@ struct ShortPage: View {
                     let name = info?.channelName.isEmpty == false ? info!.channelName : item.channel
                     if !name.isEmpty {
                         HStack(spacing: 8) {
-                            AvatarView(url: info?.channelAvatar ?? item.channelThumbnail, size: 32)
-                            Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                            let cid = info?.channelID.isEmpty == false ? info!.channelID : item.channelID
+                            if let cid, !cid.isEmpty {
+                                NavigationLink(value: ChannelRoute(id: cid, name: name,
+                                                                   avatar: info?.channelAvatar ?? item.channelThumbnail, shorts: true)) {
+                                    HStack(spacing: 8) {
+                                        AvatarView(url: info?.channelAvatar ?? item.channelThumbnail, size: 32)
+                                        Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                AvatarView(url: info?.channelAvatar ?? item.channelThumbnail, size: 32)
+                                Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                            }
                             if let info, !info.channelID.isEmpty {
                                 let on = info.subscribed ?? player.isSubscribed(info.channelID)
                                 Button {

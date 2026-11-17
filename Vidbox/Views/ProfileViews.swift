@@ -86,7 +86,7 @@ struct LibraryView: View {
                     menuRow("댓글", "text.bubble",
                             comments.items.isEmpty ? "이 앱에서 쓴 댓글" : "\(comments.items.count)개") { sheet = .comments }
                     rowDivider
-                    menuRow("저장", "bookmark", "폴더 \(folderCount)개") { sheet = .saved }
+                    menuRow("저장", "bookmark", "＋저장 폴더 \(folderCount)개 · 다운로드 \(DownloadManager.shared.files.count)개") { sheet = .saved }
                     rowDivider
                     menuRow("구독 채널", "person.2",
                             subs.channels.isEmpty ? (account.isLoggedIn ? "YouTube 계정 구독" : "비어 있음") : "\(subs.channels.count)개") { sheet = .subscriptions }
@@ -473,15 +473,62 @@ struct MyCommentsScreen: View {
 
 // MARK: - 저장 (폴더 목록)
 
+enum SavedKind: Hashable { case folders, downloads }
+
 struct SavedScreen: View {
+    var initial: SavedKind = .folders
+    @State private var kind: SavedKind?
+    @EnvironmentObject private var library: LibraryStore
+    @ObservedObject private var downloads = DownloadManager.shared
+
+    private var current: SavedKind { kind ?? initial }
+
     var body: some View {
-        ScrollView {
-            SavedFoldersList()
-                .padding(.top, 4)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                segment(.folders, "＋저장", "bookmark", "\(library.playlists.filter { $0.isMusic != true }.count + 1)")
+                segment(.downloads, "다운로드", "arrow.down.circle", "\(downloads.files.count)")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            Text(current == .folders
+                 ? "＋저장 버튼으로 폴더에 담은 영상이에요. 볼 때 인터넷이 필요해요."
+                 : "기기에 받은 파일이에요. 인터넷 없이 재생돼요.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            Divider()
+            if current == .folders {
+                ScrollView {
+                    SavedFoldersList()
+                        .padding(.top, 4)
+                }
+            } else {
+                DownloadsView(embedded: true)
+            }
         }
         .navigationTitle("저장")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+    }
+
+    private func segment(_ k: SavedKind, _ title: String, _ icon: String, _ count: String) -> some View {
+        let on = current == k
+        return Button { withAnimation(.easeInOut(duration: 0.15)) { kind = k } } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(title)
+                Text(count).foregroundStyle(on ? Color(.systemBackground).opacity(0.7) : Color.secondary)
+            }
+            .font(.subheadline.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .foregroundStyle(on ? Color(.systemBackground) : Color.primary)
+            .background(on ? Color.primary : Color.primary.opacity(0.07), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -642,7 +689,11 @@ struct ProfileSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         // 영상을 누르면 창을 닫고 재생 화면으로
-        .onChange(of: player.current?.id) { _, _ in dismiss() }
+        .onChange(of: player.current?.id) { _, _ in
+            // 창이 떠 있는 동안에는 재생 화면(전체 화면)이 못 뜰 수 있다 → 창을 닫고 다시 띄운다
+            dismiss()
+            player.reopenPlayer()
+        }
     }
 
     @ViewBuilder

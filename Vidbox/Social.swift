@@ -41,6 +41,68 @@ struct ChannelPage {
     var subscriberText: String?
     var videoCountText: String?
     var videos: FeedPage
+    /// 탭마다 YouTube가 알려 준 요청 값 (없으면 알려진 기본값)
+    var tabParams: [ChannelTab: String] = [:]
+}
+
+enum ChannelTab: String, CaseIterable, Hashable {
+    case home, videos, shorts, playlists, posts
+
+    var title: String {
+        switch self {
+        case .home: return "홈"
+        case .videos: return "동영상"
+        case .shorts: return "Shorts"
+        case .playlists: return "재생목록"
+        case .posts: return "게시물"
+        }
+    }
+
+    var fallbackParams: String {
+        switch self {
+        case .home: return "EghmZWF0dXJlZPIGBAoCMgA%3D"
+        case .videos: return "EgZ2aWRlb3PyBgQKAjoA"
+        case .shorts: return "EgZzaG9ydHPyBgUKA5oBAA%3D%3D"
+        case .playlists: return "EglwbGF5bGlzdHPyBgQKAkIA"
+        case .posts: return "Egljb21tdW5pdHnyBgQKAkoA"
+        }
+    }
+
+    /// 탭 주소(…/videos, …/shorts …)로 어느 탭인지
+    static func fromURL(_ url: String) -> ChannelTab? {
+        let last = url.split(separator: "/").last.map(String.init)?.lowercased() ?? ""
+        switch last {
+        case "featured": return .home
+        case "videos": return .videos
+        case "shorts": return .shorts
+        case "playlists": return .playlists
+        case "community", "posts": return .posts
+        default: return nil
+        }
+    }
+}
+
+struct ChannelPlaylist: Identifiable, Hashable {
+    let id: String
+    var title: String
+    var thumbnail: URL?
+    var count: String?
+}
+
+struct ChannelPost: Identifiable, Hashable {
+    let id: String
+    var text: String
+    var published: String?
+    var likes: String?
+    var images: [URL] = []
+    var video: VideoItem?
+}
+
+struct ChannelTabPage {
+    var videos: [VideoItem] = []
+    var playlists: [ChannelPlaylist] = []
+    var posts: [ChannelPost] = []
+    var next: String?
 }
 
 struct SubscribedChannel: Codable, Identifiable, Hashable {
@@ -231,7 +293,97 @@ extension InnerTubeClient {
             if v.channelThumbnail == nil { v.channelThumbnail = page.avatar }
             return v
         }
+        // 탭(홈·동영상·Shorts·재생목록·게시물)마다 요청 값
+        Self.walkJSON(json) { key, value in
+            guard key == "tabRenderer", let d = value as? [String: Any],
+                  let params = Self.digJSON(d, "endpoint", "browseEndpoint", "params") as? String,
+                  let url = Self.digJSON(d, "endpoint", "commandMetadata", "webCommandMetadata", "url") as? String,
+                  let tab = ChannelTab.fromURL(url) else { return }
+            page.tabParams[tab] = params
+        }
         return page
+    }
+
+    /// 채널의 탭 하나 (홈·동영상·Shorts·재생목록·게시물)
+    func channelTab(_ channelID: String, tab: ChannelTab, params: String?) async throws -> ChannelTabPage {
+        let json = try await postPublic("browse", body: ["browseId": channelID, "params": params ?? tab.fallbackParams])
+        return Self.parseChannelTab(json, tab)
+    }
+
+    func channelTabMore(_ token: String, tab: ChannelTab) async throws -> ChannelTabPage {
+        let json = try await postPublic("browse", body: ["continuation": token])
+        return Self.parseChannelTab(json, tab)
+    }
+
+    static func parseChannelTab(_ json: Any, _ tab: ChannelTab) -> ChannelTabPage {
+        var page = ChannelTabPage()
+        switch tab {
+        case .home, .videos:
+            let p = parsePage(json)
+            page.videos = p.items
+            page.next = tab == .videos ? p.continuation : nil
+        case .shorts:
+            let p = parseShortsPage(json)
+            page.videos = p.items
+            page.next = p.continuation
+        case .playlists:
+            var seen = Set<String>()
+            walkJSON(json) { key, value in
+                guard let d = value as? [String: Any] else { return }
+                if key == "continuationCommand", page.next == nil { page.next = d["token"] as? String; return }
+                if key == "lockupViewModel", let type = d["contentType"] as? String,
+                   type.contains("PLAYLIST") || type.contains("PODCAST"),
+                   let id = d["contentId"] as? String, seen.insert(id).inserted {
+                    let title = digJSON(d, "metadata", "lockupMetadataViewModel", "title", "content") as? String ?? ""
+                    var thumb: URL?
+                    var count: String?
+                    if let sources = digJSON(d, "contentImage", "collectionThumbnailViewModel", "primaryThumbnail",
+                                             "thumbnailViewModel", "image", "sources") as? [[String: Any]] {
+                        thumb = fixURL(sources.last?["url"] as? String)
+                    }
+                    walkJSON(d["contentImage"] ?? [String: Any]()) { k, v in
+                        if thumb == nil, k == "sources", let arr = v as? [[String: Any]] { thumb = fixURL(arr.last?["url"] as? String) }
+                        if count == nil, k == "thumbnailBadgeViewModel", let t = (v as? [String: Any])?["text"] as? String { count = t }
+                    }
+                    page.playlists.append(ChannelPlaylist(id: id, title: title, thumbnail: thumb, count: count))
+                } else if key == "gridPlaylistRenderer" || key == "playlistRenderer",
+                          let id = d["playlistId"] as? String, seen.insert(id).inserted {
+                    let thumbs = (d["thumbnails"] as? [Any])?.first
+                    page.playlists.append(ChannelPlaylist(
+                        id: id, title: plainText(d["title"]) ?? "",
+                        thumbnail: thumbnailURL(d["thumbnail"]) ?? thumbnailURL(thumbs),
+                        count: plainText(d["videoCountShortText"]) ?? plainText(d["videoCountText"])))
+                }
+            }
+        case .posts:
+            var seen = Set<String>()
+            walkJSON(json) { key, value in
+                guard let d = value as? [String: Any] else { return }
+                if key == "continuationCommand", page.next == nil { page.next = d["token"] as? String; return }
+                guard key == "backstagePostRenderer" || key == "postRenderer",
+                      let id = d["postId"] as? String, seen.insert(id).inserted else { return }
+                var post = ChannelPost(id: id, text: plainText(d["contentText"]) ?? "",
+                                       published: plainText(d["publishedTimeText"]),
+                                       likes: plainText(d["voteCount"]))
+                let att = d["backstageAttachment"]
+                if let u = thumbnailURL(digJSON(att, "backstageImageRenderer", "image")) { post.images.append(u) }
+                if let multi = digJSON(att, "postMultiImageRenderer", "images") as? [[String: Any]] {
+                    for m in multi {
+                        if let u = thumbnailURL(digJSON(m, "backstageImageRenderer", "image")) { post.images.append(u) }
+                    }
+                }
+                if let vr = digJSON(att, "videoRenderer") as? [String: Any] {
+                    post.video = parsePage(["videoRenderer": vr]).items.first
+                }
+                page.posts.append(post)
+            }
+        }
+        return page
+    }
+
+    private static func fixURL(_ s: String?) -> URL? {
+        guard let s else { return nil }
+        return URL(string: s.hasPrefix("//") ? "https:" + s : s)
     }
 
     /// 채널의 「동영상」 탭 (최신순)
