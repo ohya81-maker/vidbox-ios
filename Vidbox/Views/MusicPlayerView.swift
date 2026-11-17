@@ -105,7 +105,8 @@ struct MusicPlayerView: View {
                 .onEnded { value in
                     if value.translation.height > 140 { player.isExpanded = false }
                     withAnimation(.spring) { dragOffset = 0 }
-                }
+                },
+            including: (showLyrics || showQueue) ? .subviews : .all
         )
         .environment(\.colorScheme, .dark)
         .foregroundStyle(.white)
@@ -113,26 +114,33 @@ struct MusicPlayerView: View {
         .sheet(isPresented: $showSave) {
             if let item = player.current { SaveToFolderSheet(item: item, music: true) }
         }
-        .sheet(isPresented: $showLyrics) {
-            LyricsSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(.black.opacity(0.85))
+        // 가사 · 다음 트랙: 아래에서 올라오는 창. 위쪽 손잡이를 끌어 원하는 높이로 (아래로 끝까지 내리면 닫힘)
+        .overlay(alignment: .bottom) {
+            if showLyrics || showQueue {
+                GeometryReader { g in
+                    ResizablePanel(maxHeight: g.size.height - 8) {
+                        withAnimation(.spring(duration: 0.3)) { showLyrics = false; showQueue = false }
+                    } content: {
+                        if showLyrics {
+                            LyricsSheet()
+                        } else {
+                            ScrollView {
+                                queueList
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 4)
+                            }
+                            .foregroundStyle(.white)
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                }
+                .ignoresSafeArea(edges: .bottom)
+                .transition(.move(edge: .bottom))
                 .environment(\.colorScheme, .dark)
-        }
-        .sheet(isPresented: $showQueue) {
-            ScrollView {
-                queueList
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
             }
-            .foregroundStyle(.white)
-            .buttonStyle(.plain)
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(.black.opacity(0.85))
-            .environment(\.colorScheme, .dark)
         }
+        .animation(.spring(duration: 0.3), value: showLyrics || showQueue)
     }
 
     @State private var showQueue = false
@@ -509,5 +517,57 @@ private struct MoreMenu: View {
             }
             .frame(width: size, height: size)
         }
+    }
+}
+
+
+/// 손잡이로 높이를 자유롭게 바꾸는 아래쪽 창 (가사 · 다음 트랙)
+struct ResizablePanel<Content: View>: View {
+    let maxHeight: CGFloat
+    var onClose: () -> Void
+    @ViewBuilder var content: Content
+    @State private var height: CGFloat = 0
+    @State private var start: CGFloat?
+
+    private var minHeight: CGFloat { 140 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(Color.white.opacity(0.55))
+                .frame(width: 42, height: 5)
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { v in
+                            if start == nil { start = height }
+                            height = min(maxHeight, max(minHeight * 0.7, (start ?? height) - v.translation.height))
+                        }
+                        .onEnded { v in
+                            let base = start ?? height
+                            start = nil
+                            let end = base - v.predictedEndTranslation.height
+                            if end < minHeight { onClose(); return }
+                            withAnimation(.spring(duration: 0.25)) { height = min(maxHeight, max(minHeight, height)) }
+                        }
+                )
+                // 손잡이를 누르면 반 ↔ 전체
+                .onTapGesture {
+                    withAnimation(.spring(duration: 0.3)) {
+                        height = height < maxHeight * 0.8 ? maxHeight : maxHeight * 0.55
+                    }
+                }
+                .accessibilityLabel("창 크기 조절")
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(height: height > 0 ? height : maxHeight * 0.55)
+        .background(.ultraThinMaterial)
+        .background(Color.black.opacity(0.75))
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 16, y: -4)
+        .onAppear { if height == 0 { height = maxHeight * 0.55 } }
     }
 }
