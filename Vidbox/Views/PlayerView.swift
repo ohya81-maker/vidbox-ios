@@ -377,6 +377,29 @@ struct PlayerView: View {
         // 내 미디어(Jellyfin) 영상은 YouTube 전용인 다운로드·공유를 숨긴다
         let isJF = JellyfinCatalog.isJellyfin(item.id)
         return HStack(spacing: 2) {
+            // 좋아요 (YouTube 영상만)
+            if !isJF {
+                let liked = player.isLikedCurrent
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(duration: 0.25)) { player.toggleLike() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: liked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .font(.system(size: 19, weight: .regular))
+                            .symbolEffect(.bounce, value: liked)
+                        if let count = player.watchInfo?.likeCount, !count.isEmpty {
+                            Text(count).font(.footnote.weight(.semibold)).monospacedDigit()
+                        }
+                    }
+                    .foregroundStyle(Color.primary)
+                    .frame(minWidth: 38, minHeight: 38)
+                    .padding(.horizontal, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(liked ? "좋아요 취소" : "좋아요")
+            }
             iconButton(saved ? "checkmark.circle.fill" : "plus.circle", label: "저장") { showSave = true }
             // 다운로드: 영상(소리 포함) 또는 음원만
             if !isJF {

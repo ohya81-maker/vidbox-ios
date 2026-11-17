@@ -11,6 +11,10 @@ struct WatchInfo: Equatable {
     /// 로그인했을 때 YouTube 계정의 구독 여부 (로그인 안 했으면 nil)
     var subscribed: Bool?
     var commentsToken: String?
+    /// 좋아요 수 (예: 1.2만)
+    var likeCount: String? = nil
+    /// 로그인했을 때 YouTube 계정의 좋아요 여부 (로그인 안 했으면 nil)
+    var liked: Bool? = nil
 }
 
 struct Comment: Identifiable, Hashable {
@@ -181,8 +185,17 @@ extension InnerTubeClient {
         var owner: [String: Any]?
         var subscribed: Bool?
         var token: String?
+        var likeCount: String?
+        var likeStatus: String?
         walkJSON(json) { key, value in
             guard let d = value as? [String: Any] else { return }
+            if key == "likeButtonViewModel", likeStatus == nil || likeCount == nil {
+                if likeStatus == nil { likeStatus = digJSON(d, "likeStatusEntity", "likeStatus") as? String }
+                if likeCount == nil {
+                    likeCount = digJSON(d, "toggleButtonViewModel", "toggleButtonViewModel", "defaultButtonViewModel",
+                                        "buttonViewModel", "title") as? String
+                }
+            }
             if key == "videoOwnerRenderer", owner == nil { owner = d }
             if key == "subscribeButtonRenderer", subscribed == nil { subscribed = d["subscribed"] as? Bool }
             if key == "itemSectionRenderer", token == nil, (d["sectionIdentifier"] as? String) == "comment-item-section" {
@@ -200,7 +213,9 @@ extension InnerTubeClient {
             channelAvatar: thumbnailURL(owner["thumbnail"]),
             subscriberText: plainText(owner["subscriberCountText"]),
             subscribed: AuthStore.shared.isLoggedIn ? subscribed : nil,
-            commentsToken: token
+            commentsToken: token,
+            likeCount: likeCount,
+            liked: AuthStore.shared.isLoggedIn ? (likeStatus.map { $0 == "LIKE" }) : nil
         )
     }
 
@@ -429,9 +444,45 @@ extension InnerTubeClient {
         if failed { throw AppError.badResponse(0) }
     }
 
+    /// 로그인한 YouTube 계정으로 좋아요/좋아요 취소
+    func setLiked(_ videoID: String, _ on: Bool) async throws {
+        _ = try await postPublic(on ? "like/like" : "like/removelike", body: ["target": ["videoId": videoID]])
+    }
+
     /// 로그인한 YouTube 계정으로 구독/구독 취소
     func setSubscribed(_ channelID: String, _ on: Bool) async throws {
         _ = try await postPublic(on ? "subscription/subscribe" : "subscription/unsubscribe",
                                  body: ["channelIds": [channelID]])
+    }
+}
+
+
+// MARK: - 좋아요 (로그인 안 했을 때는 이 기기에만, 로그인했으면 YouTube 계정에도)
+
+@MainActor
+final class LikeStore: ObservableObject {
+    static let shared = LikeStore()
+    @Published private(set) var items: [VideoItem] = []
+    private let key = "likedVideos.v1"
+
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: key),
+           let list = try? JSONDecoder().decode([VideoItem].self, from: data) {
+            items = list
+        }
+    }
+
+    func isLiked(_ id: String) -> Bool { items.contains { $0.id == id } }
+
+    func set(_ item: VideoItem, _ on: Bool) {
+        items.removeAll { $0.id == item.id }
+        if on { items.insert(item, at: 0) }
+        if items.count > 1000 { items.removeLast(items.count - 1000) }
+        if let data = try? JSONEncoder().encode(items) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    func remove(at offsets: IndexSet) {
+        items.remove(atOffsets: offsets)
+        if let data = try? JSONEncoder().encode(items) { UserDefaults.standard.set(data, forKey: key) }
     }
 }

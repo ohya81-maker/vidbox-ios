@@ -330,6 +330,28 @@ final class PlayerManager: ObservableObject {
     }
 
     /// 지금 채널을 구독/취소. 로그인했으면 YouTube 계정에, 아니면 이 기기에 저장
+    /// 지금 영상 좋아요 여부 (로그인: YouTube 계정 값, 아니면 이 기기)
+    var isLikedCurrent: Bool {
+        guard let item = current else { return false }
+        if let on = watchInfo?.liked { return on }
+        return LikeStore.shared.isLiked(item.id)
+    }
+
+    func toggleLike() {
+        guard let item = current else { return }
+        let on = !isLikedCurrent
+        LikeStore.shared.set(item, on)
+        if var info = watchInfo, info.liked != nil {
+            info.liked = on
+            watchInfo = info
+        } else {
+            objectWillChange.send()
+        }
+        if AuthStore.shared.isLoggedIn {
+            Task { try? await InnerTubeClient.shared.setLiked(item.id, on) }
+        }
+    }
+
     var isSubscribedToCurrent: Bool {
         guard let info = watchInfo else { return false }
         return info.subscribed ?? SubscriptionStore.shared.isSubscribed(info.channelID)

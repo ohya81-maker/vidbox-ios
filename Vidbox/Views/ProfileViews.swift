@@ -81,7 +81,7 @@ struct LibraryView: View {
                             library.history.isEmpty ? "비어 있음" : "\(library.history.count)개") { sheet = .history }
                     rowDivider
                     menuRow("좋아요", "hand.thumbsup",
-                            account.isLoggedIn ? "YouTube 계정에서 좋아요 표시한 동영상" : "로그인하면 볼 수 있어요") { sheet = .liked }
+                            account.isLoggedIn ? "YouTube 계정에서 좋아요 표시한 동영상" : (LikeStore.shared.items.isEmpty ? "👍를 누른 동영상" : "\(LikeStore.shared.items.count)개")) { sheet = .liked }
                     rowDivider
                     menuRow("댓글", "text.bubble",
                             comments.items.isEmpty ? "이 앱에서 쓴 댓글" : "\(comments.items.count)개") { sheet = .comments }
@@ -362,35 +362,35 @@ struct HistoryScreen: View {
 
 struct LikedScreen: View {
     @EnvironmentObject private var account: AccountStore
-    @State private var showLogin = false
+    @ObservedObject private var likes = LikeStore.shared
+    @State private var pending: IndexSet?
 
     var body: some View {
         if account.isLoggedIn {
             BrowseFeedScreen(title: "좋아요 표시한 동영상", browseID: "VLLL",
-                             empty: "좋아요 표시한 동영상이 없어요.\nYouTube에서 👍를 누른 동영상이 여기에 모여요.")
+                             empty: "좋아요 표시한 동영상이 없어요.\n재생 화면의 👍를 누르면 여기에 모여요.")
         } else {
-            VStack(spacing: 16) {
-                Image(systemName: "hand.thumbsup")
-                    .font(.system(size: 40, weight: .light))
-                    .foregroundStyle(.secondary)
-                Text("YouTube 계정으로 로그인하면\n좋아요 표시한 동영상을 볼 수 있어요")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                Button { showLogin = true } label: {
-                    Text("로그인")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 10)
-                        .foregroundStyle(Color(.systemBackground))
-                        .background(Color.primary, in: Capsule())
+            List {
+                if likes.items.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("좋아요 표시한 동영상이 없어요").font(.subheadline.weight(.semibold))
+                        Text("재생 화면의 👍를 누르면 여기에 모여요. YouTube 계정으로 로그인하면 계정에도 반영돼요.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 8)
                 }
-                .buttonStyle(.plain)
+                ForEach(likes.items) { item in
+                    VideoRow(item: item, queue: likes.items)
+                }
+                .onDelete { pending = $0 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .listStyle(.plain)
             .navigationTitle("좋아요")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
-            .sheet(isPresented: $showLogin) { LoginView() }
+            .deleteConfirmation("좋아요를 취소할까요?", message: "선택한 영상이 좋아요 목록에서 빠져요.",
+                                button: "취소하기", pending: $pending) { likes.remove(at: $0) }
         }
     }
 }
