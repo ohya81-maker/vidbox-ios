@@ -236,6 +236,14 @@ final class JellyfinSession: @unchecked Sendable {
             return [URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
                         + "&MaxStreamingBitrate=10000000&TranscodingMaxAudioChannels=2&AllowVideoStreamCopy=false")].compactMap { $0 }
         }
+        // 음성이 아이폰이 못 트는 코덱(DTS·TrueHD 등)이라 변환해야 하면: 영상은 그대로, 음성만 AAC로 바꿔 TS 조각으로.
+        // fMP4 조각에 '영상 복사 + 음성 변환'을 섞으면 재생 중 갑자기 소리가 끊기는 일이 있었다 (예: DTS 영화)
+        let audioCodec = choice?.audioCodec ?? ""
+        if !audioCodec.isEmpty, !["aac", "mp3", "ac3", "eac3"].contains(audioCodec), choice?.videoCodec == "h264" {
+            urls.append(URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
+                            + "&MaxStreamingBitrate=60000000&TranscodingMaxAudioChannels=2&EnableAutoStreamCopy=true"
+                            + "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=false"))
+        }
         urls.append(URL(string: base + "&VideoCodec=h264,hevc&AudioCodec=aac,mp3,ac3,eac3&SegmentContainer=mp4"
                         + "&MaxStreamingBitrate=60000000&TranscodingMaxAudioChannels=2&EnableAutoStreamCopy=true"
                         + "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true&BreakOnNonKeyFrames=true"))
@@ -346,7 +354,7 @@ enum JellyfinAPI {
                 guard let i = st["Index"] as? Int else { return nil }
                 let title = (st["DisplayTitle"] as? String) ?? (st["Language"] as? String) ?? "\(type) \(i)"
                 return JFTrack(index: i, title: title, isText: st["IsTextSubtitleStream"] as? Bool ?? true,
-                               language: st["Language"] as? String)
+                               codec: (st["Codec"] as? String)?.lowercased(), language: st["Language"] as? String)
             }
         }
         return JFPlaybackChoice(
@@ -356,7 +364,8 @@ enum JellyfinAPI {
             subtitleIndex: (subIndex ?? -1) >= 0 && sub != nil ? subIndex : nil,
             subtitleIsText: sub?["IsTextSubtitleStream"] as? Bool ?? true,
             audioTracks: tracks("Audio"),
-            subtitleTracks: tracks("Subtitle")
+            subtitleTracks: tracks("Subtitle"),
+            videoCodec: (streams.first { ($0["Type"] as? String) == "Video" }?["Codec"] as? String)?.lowercased()
         )
     }
 
@@ -538,6 +547,8 @@ struct JFTrack: Sendable, Hashable, Identifiable {
     var index: Int
     var title: String
     var isText: Bool = true
+    /// 코덱 (예: aac, dts, truehd)
+    var codec: String? = nil
     /// 언어 코드 (예: kor, eng)
     var language: String? = nil
     var id: Int { index }
@@ -551,6 +562,13 @@ struct JFPlaybackChoice: Sendable {
     var subtitleIsText: Bool
     var audioTracks: [JFTrack] = []
     var subtitleTracks: [JFTrack] = []
+    var videoCodec: String? = nil
+
+    /// 고른 음성 트랙의 코덱
+    var audioCodec: String? {
+        let t = audioTracks.first { $0.index == audioIndex } ?? audioTracks.first
+        return t?.codec
+    }
 }
 
 /// 재생 화면 ⚙️에서 고른 값 (영상마다 음성·자막, 화질은 전체 공통)
