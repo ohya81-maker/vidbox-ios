@@ -654,7 +654,22 @@ struct ShortPage: View {
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
-            .padding(.bottom, bottomInset + 16)
+            .padding(.bottom, bottomInset + 26)
+        }
+        // YouTube처럼 맨 아래 얇은 진행 막대 (누르거나 끌어서 이동)
+        .overlay(alignment: .bottom) {
+            if isCurrent, let avPlayer = shorts.player(for: item.id) {
+                GeometryReader { g in
+                    let isPad = UIDevice.current.userInterfaceIdiom == .pad
+                    let usable = g.size.height - topInset - max(bottomInset, 74) - 4
+                    let width = isPad ? min(g.size.width, usable * 9 / 16) : g.size.width
+                    ShortsProgressBar(player: avPlayer)
+                        .id(item.id)
+                        .frame(width: width)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .padding(.bottom, bottomInset + 2)
+                }
+            }
         }
     }
 
@@ -707,5 +722,87 @@ final class ShortInfoCache {
         for id in ids where map[id] == nil && pending[id] == nil {
             Task { _ = await load(id) }
         }
+    }
+}
+
+
+/// 쇼츠 진행 막대: 평소엔 얇은 선, 누르고 끄는 동안 두꺼워지고 시간 표시
+struct ShortsProgressBar: View {
+    let player: AVPlayer
+    @State private var progress: Double = 0
+    @State private var duration: Double = 0
+    @State private var dragging: Double?
+    @State private var observer: Any?
+
+    var body: some View {
+        GeometryReader { g in
+            let p = dragging ?? progress
+            let thick = dragging != nil
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.28))
+                    .frame(height: thick ? 8 : 3)
+                Capsule().fill(Color.red)
+                    .frame(width: max(0, g.size.width * p), height: thick ? 8 : 3)
+                if thick {
+                    Circle().fill(Color.red)
+                        .frame(width: 16, height: 16)
+                        .offset(x: g.size.width * p - 8)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .padding(.bottom, 4)
+            .overlay(alignment: .top) {
+                if let d = dragging, duration > 0 {
+                    Text("\(Self.clock(d * duration)) / \(Self.clock(duration))")
+                        .font(.title3.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.6), radius: 4)
+                        .frame(maxWidth: .infinity)
+                        .offset(y: -70)
+                        .allowsHitTesting(false)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        guard duration > 0, g.size.width > 0 else { return }
+                        dragging = min(1, max(0, v.location.x / g.size.width))
+                    }
+                    .onEnded { _ in
+                        if let d = dragging, duration > 0 {
+                            progress = d
+                            player.seek(to: CMTime(seconds: d * duration, preferredTimescale: 600),
+                                        toleranceBefore: .zero, toleranceAfter: .zero)
+                        }
+                        dragging = nil
+                    }
+            )
+        }
+        .frame(height: 24)
+        .animation(.easeOut(duration: 0.15), value: dragging == nil)
+        .onAppear { attach() }
+        .onDisappear { detach() }
+    }
+
+    private func attach() {
+        detach()
+        observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { t in
+            let total = player.currentItem?.duration.seconds ?? 0
+            if total.isFinite, total > 0 {
+                duration = total
+                if dragging == nil { progress = min(1, max(0, t.seconds / total)) }
+            }
+        }
+    }
+
+    private func detach() {
+        if let observer { player.removeTimeObserver(observer) }
+        observer = nil
+    }
+
+    static func clock(_ s: Double) -> String {
+        let v = max(0, Int(s.rounded()))
+        return String(format: "%d:%02d", v / 60, v % 60)
     }
 }
