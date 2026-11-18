@@ -10,6 +10,7 @@ final class PoTokenProvider {
     static let shared = PoTokenProvider()
     var lastError: String?
     func token(binding: String) async -> String? { nil }
+    func invalidate() {}
 }
 
 actor NSigSolver {

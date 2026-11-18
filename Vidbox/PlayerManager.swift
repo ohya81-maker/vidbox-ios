@@ -725,6 +725,14 @@ final class PlayerManager: ObservableObject {
             }
             candidateIndex += 1
         }
+        // 로그인 재생 주소가 거절됐으면 새 토큰으로 한 번만 다시
+        if let fresh = await StreamResolver.shared.refreshLoggedIn(id: item.id, audioOnly: audioOnly),
+           !Task.isCancelled, current?.id == item.id {
+            candidates = fresh
+            candidateIndex = 0
+            await tryCandidates(item: item, position: position, autoPlay: autoPlay)
+            return
+        }
         // 빠른 후보가 모두 실패 → YouTubeKit(느림)
         if !usedSlowPath {
             usedSlowPath = true

@@ -125,6 +125,25 @@ actor StreamResolver {
         cache[id] = nil
     }
 
+    private var refreshed: Set<String> = []
+
+    /// 로그인 재생 주소가 영상 서버에서 거절(403)되면: 보안 토큰을 새로 만들어 한 번만 다시 받는다
+    func refreshLoggedIn(id: String, audioOnly: Bool) async -> [PlaybackSource]? {
+        guard AuthStore.shared.isLoggedIn, !id.hasPrefix("jf:"), !refreshed.contains(id) else { return nil }
+        refreshed.insert(id)
+        if refreshed.count > 300 { refreshed.removeAll() }
+        cache[id] = nil
+        await PoTokenProvider.shared.invalidate()
+        guard let entry = try? await Self.fetchLoggedIn(id: id) else {
+            PlaybackDiag.note("login-retry \(id) fail")
+            return nil
+        }
+        PlaybackDiag.note("login-retry \(id) ok")
+        cache[id] = entry
+        let list = audioOnly ? entry.audio + entry.video : entry.video + entry.audio
+        return list.isEmpty ? nil : list
+    }
+
     /// 마지막 수단: YouTubeKit (느림)
     func slowCandidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
         if Self.blockedUntil.isBlocked { throw AppError.noPlayableStream }
@@ -250,17 +269,20 @@ actor StreamResolver {
                 video.append(.single(hls))
             }
         }
-        video += formats.map { url in
-            guard let pot, var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return .single(url) }
-            c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "pot", value: pot)]
-            return .single(c.url ?? url)
+        // 단일 파일(360p)은 웹 방식에서 늘 거절돼(-11828) 시간만 잡아먹으므로, HLS가 없을 때만 넣는다
+        if video.isEmpty {
+            video += formats.map { url in
+                guard let pot, var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return .single(url) }
+                c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "pot", value: pot)]
+                return .single(c.url ?? url)
+            }
         }
         // 진단: 앱 실행마다 한 번, 재생목록 → 조각 순서로 어디서 거절되는지 기록 (주소 자체는 보내지 않고 이름만)
         if let first = video.first, case .single(let url) = first, hlsProbed.once() {
             Task.detached { await probeHLS(url, id: id) }
         }
         let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
-        return Entry(video: video, audio: video, date: Date(), length: length)
+        return Entry(video: video, audio: [], date: Date(), length: length)
     }
 
     private static let hlsProbed = OnceFlag()

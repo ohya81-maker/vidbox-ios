@@ -278,6 +278,12 @@ final class ShortsPlayer: ObservableObject {
             i += 1
         }
         guard slots[slot.id] === slot else { return }
+        // 로그인 재생 주소가 거절됐으면 새 토큰으로 한 번만 다시
+        if let fresh = await StreamResolver.shared.refreshLoggedIn(id: slot.id, audioOnly: false), slots[slot.id] === slot {
+            slot.candidates = fresh
+            await tryCandidate(slot, from: 0)
+            return
+        }
         PlaybackDiag.report("shorts", id: slot.id, details: ["candidates=\(slot.candidates.map(\.kind))",
                                                               "last=" + PlaybackDiag.describe(slot.player.currentItem)])
         slot.failed = true
