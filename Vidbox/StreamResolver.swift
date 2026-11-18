@@ -398,12 +398,41 @@ actor StreamResolver {
 
     /// 로그인한 계정으로 TV 앱 방식 재생 정보 → 서명·n 암호를 풀어 일반(IOS)과 같은 방법으로 재생
     /// (보안 토큰이 필요 없고, 자체 HLS로 고화질·빠른 시작이 된다)
+    private static let tvConfig = TVConfigStore()
+
+    /// TV 앱 화면(youtube.com/tv)의 설정: 현재 TV 앱 버전 · 방문자 ID · TV용 재생기 스크립트
+    /// (이 값들이 로그인 세션과 맞지 않으면 「페이지를 새로고침해야 합니다」로 거절된다)
+    private static func loadTVConfig() async -> TVConfigStore.Config? {
+        if let c = tvConfig.current { return c }
+        var r = URLRequest(url: URL(string: "https://www.youtube.com/tv")!)
+        r.timeoutInterval = 10
+        r.httpShouldHandleCookies = false
+        r.setValue(tvUserAgent, forHTTPHeaderField: "User-Agent")
+        r.setValue("ko-KR,ko;q=0.9", forHTTPHeaderField: "Accept-Language")
+        if let cookie = AuthStore.shared.headers(origin: "https://www.youtube.com")["Cookie"] {
+            r.setValue(cookie, forHTTPHeaderField: "Cookie")
+        }
+        guard let (d, _) = try? await URLSession.shared.data(for: r) else { return nil }
+        let html = String(decoding: d, as: UTF8.self)
+        let version = firstMatch(html, #""INNERTUBE_CLIENT_VERSION":"([^"]+)""#)
+        let visitor = firstMatch(html, #""VISITOR_DATA":"([^"]+)""#)
+        let player = firstMatch(html, #""PLAYER_JS_URL":"([^"]+)""#)?.replacingOccurrences(of: "\\/", with: "/")
+        PlaybackDiag.note("tv cfg ver=\(version ?? "-") visitor=\(visitor == nil ? "N" : "Y") player=\(player ?? "-") bytes=\(d.count)")
+        guard version != nil || visitor != nil || player != nil else { return nil }
+        let c = TVConfigStore.Config(version: version ?? tvClientVersion, visitor: visitor, player: player)
+        tvConfig.current = c
+        return c
+    }
+
     private static func fetchTVLoggedIn(id: String) async throws -> Entry {
-        guard let player = await currentPlayerPath(),
+        let cfg = await loadTVConfig()
+        let fallbackPlayer = await currentPlayerPath()
+        guard let player = cfg?.player ?? fallbackPlayer,
               let sts = await NSigSolver.shared.prepare(playerPath: player) else {
             PlaybackDiag.note("tv no player/sts")
             throw AppError.noPlayableStream
         }
+        let version = cfg?.version ?? tvClientVersion
         var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 8
@@ -411,12 +440,17 @@ actor StreamResolver {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(tvUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("7", forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue(tvClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue(version, forHTTPHeaderField: "X-Youtube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         for (k, v) in AuthStore.shared.headers(origin: "https://www.youtube.com") { request.setValue(v, forHTTPHeaderField: k) }
+        var client: [String: Any] = ["clientName": "TVHTML5", "clientVersion": version, "userAgent": tvUserAgent,
+                                     "hl": "ko", "gl": "KR"]
+        if let visitor = cfg?.visitor {
+            client["visitorData"] = visitor
+            request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id")
+        }
         let body: [String: Any] = [
-            "context": ["client": ["clientName": "TVHTML5", "clientVersion": tvClientVersion, "userAgent": tvUserAgent,
-                                   "hl": "ko", "gl": "KR"]],
+            "context": ["client": client],
             "videoId": id,
             "playbackContext": ["contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS", "signatureTimestamp": sts]],
             "contentCheckOk": true,
@@ -525,6 +559,7 @@ actor StreamResolver {
             let msg: String = "player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")"
             PlaybackDiag.note(prefix + msg)
             if !tv, playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 2) }
+            if tv { tvConfig.current = nil }
             throw AppError.noPlayableStream
         }
 
@@ -1323,6 +1358,17 @@ enum PlaybackDiag {
     }
 }
 
+
+/// TV 앱 설정 (1시간 기억)
+final class TVConfigStore: @unchecked Sendable {
+    struct Config: Sendable { let version: String; let visitor: String?; let player: String? }
+    private let lock = NSLock()
+    private var value: (Config, Date)?
+    var current: Config? {
+        get { lock.lock(); defer { lock.unlock() }; guard let v = value, Date().timeIntervalSince(v.1) < 3600 else { return nil }; return v.0 }
+        set { lock.lock(); value = newValue.map { ($0, Date()) }; lock.unlock() }
+    }
+}
 
 /// 연속 3번 실패하면 30분 동안 쉬기
 final class FailCounter: @unchecked Sendable {
