@@ -204,9 +204,22 @@ actor StreamResolver {
 
     /// 로그인 재생: 웹(watch 페이지 HLS) → 모바일 웹(MWEB, 파일 주소 + 보안 토큰) → TV 앱 방식
     /// (2026-11-18 밤부터 웹은 HLS 없이 SABR만 줘서, 모바일 웹 방식을 추가)
+    /// 웹 방식이 HLS 없이 SABR만 줄 때: 30분 동안은 웹 확인(약 0.8초)을 건너뛰고 모바일 웹부터
+    static let webSabrOnly = BlockClock()
+
     private static func signedIn(id: String) async -> Entry? {
+        var mwebTried = false
+        if webSabrOnly.isBlocked, webSession.current != nil, mwebFailures.allowed {
+            mwebTried = true
+            if let m = try? await fetchMWebLoggedIn(id: id) {
+                mwebFailures.success()
+                if mwebReported.once() { PlaybackDiag.report("mweb-play", id: id, details: ["ok", "fast"]) }
+                return m
+            }
+            mwebFailures.failure()
+        }
         if let web = try? await fetchLoggedIn(id: id) { return web }
-        if mwebFailures.allowed {
+        if !mwebTried, mwebFailures.allowed {
             if let m = try? await fetchMWebLoggedIn(id: id) {
                 mwebFailures.success()
                 if mwebReported.once() { PlaybackDiag.report("mweb-play", id: id, details: ["ok"]) }
@@ -286,6 +299,7 @@ actor StreamResolver {
         PlaybackDiag.note(String(format: "login-watch %@ status=%@ hls=%@ files=%d t=%.2f", id, status,
                                  hls == nil ? "N" : "Y", formats.count, Date().timeIntervalSince(t0)))
         if hls == nil, let streaming {
+            if streaming["serverAbrStreamingUrl"] != nil { webSabrOnly.block(minutes: 30) }
             let af = streaming["adaptiveFormats"] as? [[String: Any]] ?? []
             let keyList: String = streaming.keys.sorted().joined(separator: ",")
             let withURL: Int = af.filter { $0["url"] != nil }.count
@@ -294,6 +308,7 @@ actor StreamResolver {
             PlaybackDiag.note(line)
         }
         guard status == "OK", hls != nil || !formats.isEmpty else { throw AppError.noPlayableStream }
+        if hls != nil { webSabrOnly.clear() }
         // 영상 서버가 요구하는 보안 토큰(PO 토큰): 로그인 세션 ID에 묶어 만든다 (없으면 방문자 ID)
         let session = firstMatch(html, #""DATASYNC_ID":"([^"|]*)"#).flatMap { $0.isEmpty ? nil : $0 }
         let binding = session ?? firstMatch(html, #""VISITOR_DATA":"([^"]+)""#) ?? ""
