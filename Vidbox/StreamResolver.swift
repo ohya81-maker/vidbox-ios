@@ -134,7 +134,7 @@ actor StreamResolver {
         if refreshed.count > 300 { refreshed.removeAll() }
         cache[id] = nil
         await PoTokenProvider.shared.invalidate()
-        guard let entry = try? await Self.fetchLoggedIn(id: id) else {
+        guard let entry = await Self.signedIn(id: id) else {
             PlaybackDiag.note("login-retry \(id) fail")
             return nil
         }
@@ -199,8 +199,21 @@ actor StreamResolver {
     private static let tvFailures = FailCounter()
     private static let tvReported = OnceFlag()
 
-    /// 로그인 재생: TV 앱 방식 먼저 (고화질·빠름), 안 되면 웹(watch 페이지 HLS)
+    private static let mwebFailures = FailCounter()
+    private static let mwebReported = OnceFlag()
+
+    /// 로그인 재생: 웹(watch 페이지 HLS) → 모바일 웹(MWEB, 파일 주소 + 보안 토큰) → TV 앱 방식
+    /// (2026-11-18 밤부터 웹은 HLS 없이 SABR만 줘서, 모바일 웹 방식을 추가)
     private static func signedIn(id: String) async -> Entry? {
+        if let web = try? await fetchLoggedIn(id: id) { return web }
+        if mwebFailures.allowed {
+            if let m = try? await fetchMWebLoggedIn(id: id) {
+                mwebFailures.success()
+                if mwebReported.once() { PlaybackDiag.report("mweb-play", id: id, details: ["ok"]) }
+                return m
+            }
+            mwebFailures.failure()
+        }
         if tvFailures.allowed {
             if let tv = try? await fetchTVLoggedIn(id: id) {
                 tvFailures.success()
@@ -209,7 +222,7 @@ actor StreamResolver {
             }
             tvFailures.failure()
         }
-        return try? await fetchLoggedIn(id: id)
+        return nil
     }
 
     /// Safari로 보는 watch 페이지를 로그인 쿠키와 함께 받아, 그 안의 재생 정보(HLS 주소)를 쓴다.
@@ -238,6 +251,10 @@ actor StreamResolver {
         let playability = json["playabilityStatus"] as? [String: Any]
         let status = playability?["status"] as? String ?? "-"
         let streaming = json["streamingData"] as? [String: Any]
+        webSession.current = WebSessionStore.Value(
+            datasync: firstMatch(html, #""DATASYNC_ID":"([^"|]*)"#).flatMap { $0.isEmpty ? nil : $0 },
+            visitor: firstMatch(html, #""VISITOR_DATA":"([^"]+)""#),
+            player: firstMatch(html, #""jsUrl":"([^"]+base\.js)""#))
         var hls = (streaming?["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
         // 서명 없이 바로 쓸 수 있는 파일 주소 (있으면 예비로)
         var formats = ((streaming?["formats"] as? [[String: Any]]) ?? []).compactMap { ($0["url"] as? String).flatMap(URL.init(string:)) }
@@ -393,6 +410,52 @@ actor StreamResolver {
 
     // MARK: - InnerTube player (iOS 클라이언트)
 
+    private static let webSession = WebSessionStore()
+    static let mwebUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1"
+    static let mwebClientVersion = "2.20250925.01.00"
+
+    /// 로그인한 계정으로 모바일 웹(MWEB) 재생 정보 → 서명·n을 풀고 보안 토큰(pot)을 붙여 자체 HLS로 재생
+    private static func fetchMWebLoggedIn(id: String) async throws -> Entry {
+        guard let web = webSession.current else {
+            PlaybackDiag.note("mweb no web session")
+            throw AppError.noPlayableStream
+        }
+        let fallbackPlayer = await currentPlayerPath()
+        guard let player = web.player ?? fallbackPlayer,
+              let sts = await NSigSolver.shared.prepare(playerPath: player) else {
+            PlaybackDiag.note("mweb no player/sts")
+            throw AppError.noPlayableStream
+        }
+        let binding = web.datasync ?? web.visitor ?? ""
+        let pot = binding.isEmpty ? nil : await PoTokenProvider.shared.token(binding: binding)
+        var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(mwebUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("2", forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(mwebClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        for (k, v) in AuthStore.shared.headers(origin: "https://www.youtube.com") { request.setValue(v, forHTTPHeaderField: k) }
+        var client: [String: Any] = ["clientName": "MWEB", "clientVersion": mwebClientVersion, "userAgent": mwebUserAgent,
+                                     "hl": "ko", "gl": "KR"]
+        if let visitor = web.visitor {
+            client["visitorData"] = visitor
+            request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id")
+        }
+        var body: [String: Any] = [
+            "context": ["client": client],
+            "videoId": id,
+            "playbackContext": ["contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS", "signatureTimestamp": sts]],
+            "contentCheckOk": true,
+            "racyCheckOk": true,
+        ]
+        if let pot { body["serviceIntegrityDimensions"] = ["poToken": pot] }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await fetchFromInnerTube(id: id, prepared: request, tvPlayer: player, label: "mweb", pot: pot)
+    }
+
     static let tvUserAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)"
     static let tvClientVersion = "7.20250923.13.00"
 
@@ -457,7 +520,7 @@ actor StreamResolver {
             "racyCheckOk": true,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await fetchFromInnerTube(id: id, prepared: request, tvPlayer: player)
+        return try await fetchFromInnerTube(id: id, prepared: request, tvPlayer: player, label: "tv", pot: nil)
     }
 
     /// 재생기 스크립트 주소: 로그인 watch 페이지에서 본 것, 없으면 iframe_api에서 찾는다
@@ -472,7 +535,7 @@ actor StreamResolver {
     }
 
     /// TV 응답의 영상 파일 주소: signatureCipher(s · sp · url)와 n을 풀어 바로 쓸 수 있는 url로 바꾼다
-    private static func decipher(_ streaming: [String: Any], player: String) async -> [String: Any] {
+    private static func decipher(_ streaming: [String: Any], player: String, pot: String? = nil) async -> [String: Any] {
         var out = streaming
         var nIn: [String] = [], sIn: [String] = []
         func parts(_ f: [String: Any]) -> (url: URLComponents, s: String?, sp: String)? {
@@ -502,6 +565,7 @@ actor StreamResolver {
                     guard let v = solved.sig[s] else { return nil }
                     items.append(URLQueryItem(name: p.sp, value: v))
                 }
+                if let pot { items.append(URLQueryItem(name: "pot", value: pot)) }
                 p.url.queryItems = items
                 guard let url = p.url.url?.absoluteString else { return nil }
                 var g = f
@@ -545,7 +609,8 @@ actor StreamResolver {
         return try await fetchFromInnerTube(id: id, prepared: request, tvPlayer: nil)
     }
 
-    private static func fetchFromInnerTube(id: String, prepared request: URLRequest, tvPlayer: String?) async throws -> Entry {
+    private static func fetchFromInnerTube(id: String, prepared request: URLRequest, tvPlayer: String?,
+                                           label: String = "", pot: String? = nil) async throws -> Entry {
         let tv = tvPlayer != nil
         let tStart = Date()
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -555,20 +620,26 @@ actor StreamResolver {
         guard let json, playability?["status"] as? String == "OK",
               let streamingData = json["streamingData"] as? [String: Any]
         else {
-            let prefix: String = tv ? "tv " : ""
+            let prefix: String = tv ? label + " " : ""
             let msg: String = "player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")"
             PlaybackDiag.note(prefix + msg)
             if !tv, playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 2) }
-            if tv { tvConfig.current = nil }
+            if label == "tv" { tvConfig.current = nil }
             throw AppError.noPlayableStream
         }
 
         if !tv { StreamResolver.blockedUntil.clear() }
         CaptionStore.shared.save(id, json["captions"])
         var streaming: [String: Any] = streamingData
-        if let tvPlayer { streaming = await decipher(streaming, player: tvPlayer) }
+        if let tvPlayer { streaming = await decipher(streaming, player: tvPlayer, pot: pot) }
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
-        if tv { PlaybackDiag.note("tv \(id) formats=\(formats.count)") }
+        if tv {
+            let raw: Int = (streamingData["adaptiveFormats"] as? [[String: Any]])?.count ?? 0
+            let keyList: String = streamingData.keys.sorted().joined(separator: ",")
+            let potMark: String = pot == nil ? "N" : "Y"
+            let line: String = label + " " + id + " raw=" + String(raw) + " formats=" + String(formats.count) + " pot=" + potMark + " keys=" + keyList
+            PlaybackDiag.note(line)
+        }
         if tv, formats.isEmpty { throw AppError.noPlayableStream }
         // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
         let allAudio = formats.filter { $0.isAudio }
@@ -1358,6 +1429,17 @@ enum PlaybackDiag {
     }
 }
 
+
+/// 로그인 watch 페이지에서 본 세션 값 (모바일 웹 방식에 다시 쓴다, 1시간 기억)
+final class WebSessionStore: @unchecked Sendable {
+    struct Value: Sendable { let datasync: String?; let visitor: String?; let player: String? }
+    private let lock = NSLock()
+    private var value: (Value, Date)?
+    var current: Value? {
+        get { lock.lock(); defer { lock.unlock() }; guard let v = value, Date().timeIntervalSince(v.1) < 3600 else { return nil }; return v.0 }
+        set { lock.lock(); value = newValue.map { ($0, Date()) }; lock.unlock() }
+    }
+}
 
 /// TV 앱 설정 (1시간 기억)
 final class TVConfigStore: @unchecked Sendable {
