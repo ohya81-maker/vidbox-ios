@@ -199,9 +199,33 @@ actor StreamResolver {
         let playability = json["playabilityStatus"] as? [String: Any]
         let status = playability?["status"] as? String ?? "-"
         let streaming = json["streamingData"] as? [String: Any]
-        let hls = (streaming?["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
+        var hls = (streaming?["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
         // 서명 없이 바로 쓸 수 있는 파일 주소 (있으면 예비로)
-        let formats = ((streaming?["formats"] as? [[String: Any]]) ?? []).compactMap { ($0["url"] as? String).flatMap(URL.init(string:)) }
+        var formats = ((streaming?["formats"] as? [[String: Any]]) ?? []).compactMap { ($0["url"] as? String).flatMap(URL.init(string:)) }
+        // 주소 속 암호값 n을 YouTube 재생기 스크립트로 풀어 바꾼다 (안 바꾸면 영상 조각이 403으로 거절됨)
+        var nState = "none"
+        if let playerPath = firstMatch(html, #""jsUrl":"([^"]+base\.js)""#) {
+            var inputs: [String] = []
+            if let hls, let n = pathValue(hls, "n") { inputs.append(n) }
+            for f in formats { if let n = URLComponents(url: f, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "n" })?.value { inputs.append(n) } }
+            if !inputs.isEmpty {
+                let t1 = Date()
+                let map = await NSigSolver.shared.solveN(inputs, playerPath: playerPath)
+                let solverErr = await NSigSolver.shared.lastError ?? "-"
+                nState = map.isEmpty ? "fail: " + solverErr : String(format: "ok %.2fs", Date().timeIntervalSince(t1))
+                if let h = hls, let n = pathValue(h, "n"), let solved = map[n] {
+                    hls = URL(string: h.absoluteString.replacingOccurrences(of: "/n/\(n)/", with: "/n/\(solved)/"))
+                }
+                formats = formats.map { f in
+                    guard var c = URLComponents(url: f, resolvingAgainstBaseURL: false),
+                          let n = c.queryItems?.first(where: { $0.name == "n" })?.value, let solved = map[n] else { return f }
+                    c.queryItems = c.queryItems?.map { $0.name == "n" ? URLQueryItem(name: "n", value: solved) : $0 }
+                    return c.url ?? f
+                }
+            }
+        } else {
+            nState = "no jsUrl"
+        }
         PlaybackDiag.note(String(format: "login-watch %@ status=%@ hls=%@ files=%d t=%.2f", id, status,
                                  hls == nil ? "N" : "Y", formats.count, Date().timeIntervalSince(t0)))
         guard status == "OK", hls != nil || !formats.isEmpty else { throw AppError.noPlayableStream }
@@ -214,7 +238,7 @@ actor StreamResolver {
             let err = await PoTokenProvider.shared.lastError ?? "-"
             PlaybackDiag.report("login-play", id: id, details: ["hls=\(hls != nil)", "files=\(formats.count)",
                                                               "binding=\(session != nil ? "session" : binding.isEmpty ? "none" : "visitor")",
-                                                              "pot=\(pot.map { "len\($0.count)" } ?? "fail: \(err)")"])
+                                                              "pot=\(pot.map { "len\($0.count)" } ?? "fail: \(err)")", "n=\(nState)"])
         }
         CaptionStore.shared.save(id, json["captions"])
         var video: [PlaybackSource] = []
@@ -276,6 +300,13 @@ actor StreamResolver {
             out.append("segmentStatus=\(ss)")
         }
         PlaybackDiag.report("hls-probe", id: id, details: out)
+    }
+
+    /// /key/value/ 형태 주소에서 값 꺼내기 (HLS 주소의 n 등)
+    private static func pathValue(_ url: URL, _ key: String) -> String? {
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard let i = parts.firstIndex(of: key), i + 1 < parts.count else { return nil }
+        return parts[i + 1]
     }
 
     private static func firstMatch(_ text: String, _ pattern: String) -> String? {

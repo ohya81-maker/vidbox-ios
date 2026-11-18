@@ -11,3 +11,9 @@ final class PoTokenProvider {
     var lastError: String?
     func token(binding: String) async -> String? { nil }
 }
+
+actor NSigSolver {
+    static let shared = NSigSolver()
+    var lastError: String?
+    func solveN(_ inputs: [String], playerPath: String) async -> [String: String] { [:] }
+}
