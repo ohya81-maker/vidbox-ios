@@ -98,9 +98,10 @@ actor StreamResolver {
 
     func prefetch(_ ids: [String]) {
         // 「봇 확인」으로 막힌 동안은 미리 받기를 아예 하지 않는다 (요청이 쌓이면 차단이 더 오래 간다)
+        // 단, 로그인돼 있으면 로그인 재생으로 다음 1개만 미리 받는다 (쇼츠가 멈칫하지 않게)
         let blocked = Self.blockedUntil.isBlocked
-        if blocked { return }
-        let targets = ids
+        if blocked && !AuthStore.shared.isLoggedIn { return }
+        let targets = blocked ? Array(ids.prefix(1)) : ids
         for id in targets where !id.hasPrefix("jf:") {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
             guard inflight[id] == nil, prefetching < 3 else { continue }
@@ -143,10 +144,15 @@ actor StreamResolver {
         let task = Task<Entry, Error> {
             // 이미 막힌 상태면 한 번만 확인하고 끝낸다 (다른 방법들로 여러 번 다시 묻지 않기 — 차단을 길게 만든다)
             if Self.blockedUntil.isBlocked {
+                // 막힌 동안 로그인돼 있으면 로그인 재생으로 바로 (로그인 안 한 요청을 더 보내지 않기)
+                if AuthStore.shared.isLoggedIn, let signed = try? await Self.fetchLoggedIn(id: id) { return signed }
                 if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
                 throw AppError.noPlayableStream
             }
             if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
+            // 「봇 확인」으로 막혔고 로그인돼 있으면: 로그인한 계정으로 재생 정보를 받는다
+            if Self.blockedUntil.isBlocked, AuthStore.shared.isLoggedIn,
+               let signed = try? await Self.fetchLoggedIn(id: id) { return signed }
             // 「봇 확인」 응답은 잠깐씩 섞여 온다 → 느린 방법(4~5초)으로 가기 전에 한 번만 빨리 다시
             try? await Task.sleep(nanoseconds: 250_000_000)
             if let again = try? await Self.fetchFromInnerTube(id: id) { return again }
@@ -163,6 +169,71 @@ actor StreamResolver {
         let entry = try await task.value
         cache[id] = entry
         return entry
+    }
+
+    // MARK: - 로그인 재생 (봇 확인으로 막혔을 때의 예비)
+
+    /// Safari로 보는 watch 페이지를 로그인 쿠키와 함께 받아, 그 안의 재생 정보(HLS 주소)를 쓴다.
+    /// 로그인된 요청은 「봇이 아님을 확인하세요」를 거의 받지 않는다. 일반 요청이 막혔을 때만 쓴다 (계정 부담 줄이기)
+    private static let loginReported = OnceFlag()
+    static let safariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15"
+
+    private static func fetchLoggedIn(id: String) async throws -> Entry {
+        let t0 = Date()
+        var request = URLRequest(url: URL(string: "https://www.youtube.com/watch?v=\(id)&bpctr=9999999999&has_verified=1")!)
+        request.timeoutInterval = 10
+        request.httpShouldHandleCookies = false
+        request.setValue(safariUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("ko-KR,ko;q=0.9", forHTTPHeaderField: "Accept-Language")
+        for (k, v) in AuthStore.shared.headers(origin: "https://www.youtube.com") where k == "Cookie" {
+            request.setValue(v, forHTTPHeaderField: k)
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let html = String(decoding: data, as: UTF8.self)
+        guard let raw = extractJSON(html, after: "ytInitialPlayerResponse = "),
+              let json = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+        else {
+            PlaybackDiag.note("login-watch http=\((response as? HTTPURLResponse)?.statusCode ?? 0) no player json (\(data.count) bytes)")
+            throw AppError.noPlayableStream
+        }
+        let playability = json["playabilityStatus"] as? [String: Any]
+        let status = playability?["status"] as? String ?? "-"
+        let streaming = json["streamingData"] as? [String: Any]
+        let hls = (streaming?["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
+        // 서명 없이 바로 쓸 수 있는 파일 주소 (있으면 예비로)
+        let formats = ((streaming?["formats"] as? [[String: Any]]) ?? []).compactMap { ($0["url"] as? String).flatMap(URL.init(string:)) }
+        PlaybackDiag.note(String(format: "login-watch %@ status=%@ hls=%@ files=%d t=%.2f", id, status,
+                                 hls == nil ? "N" : "Y", formats.count, Date().timeIntervalSince(t0)))
+        guard status == "OK", hls != nil || !formats.isEmpty else { throw AppError.noPlayableStream }
+        // 로그인 재생이 실제로 되는지 확인용 (앱 실행마다 처음 한 번만 기록)
+        if loginReported.once() { PlaybackDiag.report("login-play", id: id, details: ["hls=\(hls != nil)", "files=\(formats.count)"]) }
+        CaptionStore.shared.save(id, json["captions"])
+        var video: [PlaybackSource] = []
+        if let hls { video.append(.single(hls)) }
+        video += formats.map { .single($0) }
+        let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
+        return Entry(video: video, audio: video, date: Date(), length: length)
+    }
+
+    /// HTML 안의 `name = {...};` 에서 JSON 객체 부분만 잘라낸다 (문자열 안의 괄호는 건너뜀)
+    private static func extractJSON(_ html: String, after marker: String) -> String? {
+        guard let r = html.range(of: marker) else { return nil }
+        let chars = Array(html[r.upperBound...].utf8)
+        guard chars.first == UInt8(ascii: "{") else { return nil }
+        var depth = 0, inString = false, escaped = false
+        for (i, c) in chars.enumerated() {
+            if inString {
+                if escaped { escaped = false } else if c == UInt8(ascii: "\\") { escaped = true } else if c == UInt8(ascii: "\"") { inString = false }
+                continue
+            }
+            if c == UInt8(ascii: "\"") { inString = true }
+            else if c == UInt8(ascii: "{") { depth += 1 }
+            else if c == UInt8(ascii: "}") {
+                depth -= 1
+                if depth == 0 { return String(decoding: chars[0...i], as: UTF8.self) }
+            }
+        }
+        return nil
     }
 
     // MARK: - InnerTube player (iOS 클라이언트)
@@ -996,6 +1067,13 @@ enum PlaybackDiag {
     }
 }
 
+
+/// 한 번만 true
+final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func once() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+}
 
 /// YouTube가 「봇이 아님을 확인하세요」로 막았을 때 잠시 미리 받기를 멈추기 위한 시계
 final class BlockClock: @unchecked Sendable {
