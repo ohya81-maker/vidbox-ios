@@ -230,8 +230,52 @@ actor StreamResolver {
             c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "pot", value: pot)]
             return .single(c.url ?? url)
         }
+        // 진단: 앱 실행마다 한 번, 재생목록 → 조각 순서로 어디서 거절되는지 기록 (주소 자체는 보내지 않고 이름만)
+        if let first = video.first, case .single(let url) = first, hlsProbed.once() {
+            Task.detached { await probeHLS(url, id: id) }
+        }
         let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
         return Entry(video: video, audio: video, date: Date(), length: length)
+    }
+
+    private static let hlsProbed = OnceFlag()
+
+    private static func probeHLS(_ master: URL, id: String) async {
+        var out: [String] = []
+        func get(_ url: URL, range: Bool = false) async -> (Int, String) {
+            var r = URLRequest(url: url)
+            r.timeoutInterval = 10
+            r.setValue(safariUserAgent, forHTTPHeaderField: "User-Agent")
+            if range { r.setValue("bytes=0-2000", forHTTPHeaderField: "Range") }
+            guard let (d, resp) = try? await URLSession.shared.data(for: r) else { return (-1, "") }
+            return ((resp as? HTTPURLResponse)?.statusCode ?? 0, range ? "" : String(decoding: d, as: UTF8.self))
+        }
+        func keys(_ url: URL) -> String {
+            // /videoplayback/key/value/key/value... 의 key 이름과 쿼리 이름만
+            let parts = url.path.split(separator: "/").map(String.init)
+            var names: [String] = []
+            if let i = parts.firstIndex(where: { $0.hasPrefix("videoplayback") || $0 == "hls_variant" || $0 == "hls_playlist" }) {
+                var j = i + 1
+                while j < parts.count { names.append(parts[j]); j += 2 }
+            }
+            let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.map(\.name) ?? []
+            return (names + q.map { "?" + $0 }).joined(separator: ",")
+        }
+        out.append("master=" + keys(master))
+        let (ms, mtext) = await get(master)
+        out.append("masterStatus=\(ms)")
+        guard let vLine = mtext.split(separator: "\n").first(where: { $0.hasPrefix("http") }), let variant = URL(string: String(vLine)) else {
+            PlaybackDiag.report("hls-probe", id: id, details: out); return
+        }
+        out.append("variant=" + keys(variant))
+        let (vs, vtext) = await get(variant)
+        out.append("variantStatus=\(vs)")
+        if let sLine = vtext.split(separator: "\n").first(where: { $0.hasPrefix("http") }), let seg = URL(string: String(sLine)) {
+            out.append("segment=" + keys(seg))
+            let (ss, _) = await get(seg, range: true)
+            out.append("segmentStatus=\(ss)")
+        }
+        PlaybackDiag.report("hls-probe", id: id, details: out)
     }
 
     private static func firstMatch(_ text: String, _ pattern: String) -> String? {
