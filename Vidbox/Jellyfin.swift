@@ -242,7 +242,7 @@ final class JellyfinSession: @unchecked Sendable {
         if !audioCodec.isEmpty, !["aac", "mp3", "ac3", "eac3"].contains(audioCodec), choice?.videoCodec == "h264" {
             urls.append(URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
                             + "&MaxStreamingBitrate=60000000&TranscodingMaxAudioChannels=2&EnableAutoStreamCopy=true"
-                            + "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=false"))
+                            + "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=false&BreakOnNonKeyFrames=true"))
         }
         urls.append(URL(string: base + "&VideoCodec=h264,hevc&AudioCodec=aac,mp3,ac3,eac3&SegmentContainer=mp4"
                         + "&MaxStreamingBitrate=60000000&TranscodingMaxAudioChannels=2&EnableAutoStreamCopy=true"
@@ -676,8 +676,15 @@ final class SubtitleClock: ObservableObject {
         // 앞으로 진행하면 이어서, 뒤로 가면 처음부터 찾는다
         if index >= cues.count || cues[index].start > t { index = 0 }
         while index + 1 < cues.count, cues[index + 1].start <= t { index += 1 }
-        let cue = cues[index]
-        let now = (cue.start <= t && t < cue.end) ? cue.text : nil
+        // 지금 시각에 걸쳐 있는 자막 (겹치는 줄은 함께)
+        var active: [String] = []
+        var i = index
+        while i >= 0, index - i < 8 {
+            let cue = cues[i]
+            if cue.start <= t, t < cue.end { active.insert(cue.text, at: 0) }
+            i -= 1
+        }
+        let now: String? = active.isEmpty ? nil : active.joined(separator: "\n")
         if now != text { text = now }
     }
 }

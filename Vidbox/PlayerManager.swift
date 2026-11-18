@@ -542,6 +542,7 @@ final class PlayerManager: ObservableObject {
     func seek(to seconds: Double) {
         let target = max(0, duration > 0 ? min(seconds, duration - 0.5) : seconds)
         currentTime = target
+        subtitles.update(target)
         seekGeneration += 1
         let generation = seekGeneration
         let shouldPlay = !userPaused
