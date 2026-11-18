@@ -739,7 +739,9 @@ final class PlayerManager: ObservableObject {
         guard current?.id == item.id else { return }
         isLoading = false
         errorMessage = StreamResolver.blockedUntil.isBlocked
-            ? "YouTube가 이 인터넷 연결을 잠시 막았어요 (봇 확인).\n와이파이↔모바일 데이터를 바꾸거나 잠시 뒤 다시 시도해 주세요."
+            ? (AuthStore.shared.isLoggedIn
+               ? "YouTube가 이 인터넷 연결을 잠시 막았어요 (봇 확인).\n와이파이↔모바일 데이터를 바꾸거나 잠시 뒤 다시 시도해 주세요."
+               : "YouTube가 이 인터넷 연결을 잠시 막았어요 (봇 확인).\n프로필에서 YouTube에 로그인하면 막혀도 재생할 수 있어요.")
             : "재생할 수 없는 영상입니다."
         PlaybackDiag.report("video", id: item.id,
                             details: ["candidates=\(candidates.map(\.kind))", "last=" + PlaybackDiag.describe(player.currentItem)])

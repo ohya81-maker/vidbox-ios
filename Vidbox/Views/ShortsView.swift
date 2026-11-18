@@ -651,7 +651,9 @@ struct ShortPage: View {
                                 VStack(spacing: 6) {
                                     Label("YouTube가 이 인터넷 연결을 잠시 막았어요", systemImage: "exclamationmark.circle")
                                         .font(.subheadline.weight(.semibold))
-                                    Text("봇 확인 · 와이파이↔모바일 데이터를 바꾸거나 잠시 뒤 다시 시도해 주세요")
+                                    Text(AuthStore.shared.isLoggedIn
+                                         ? "봇 확인 · 와이파이↔모바일 데이터를 바꾸거나 잠시 뒤 다시 시도해 주세요"
+                                         : "봇 확인 · 프로필에서 YouTube에 로그인하면 막혀도 재생할 수 있어요")
                                         .font(.caption)
                                         .foregroundStyle(.white.opacity(0.8))
                                 }
