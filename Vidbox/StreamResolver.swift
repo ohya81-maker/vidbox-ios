@@ -168,14 +168,14 @@ actor StreamResolver {
             // 이미 막힌 상태면 한 번만 확인하고 끝낸다 (다른 방법들로 여러 번 다시 묻지 않기 — 차단을 길게 만든다)
             if Self.blockedUntil.isBlocked {
                 // 막힌 동안 로그인돼 있으면 로그인 재생으로 바로 (로그인 안 한 요청을 더 보내지 않기)
-                if AuthStore.shared.isLoggedIn, let signed = try? await Self.fetchLoggedIn(id: id) { return signed }
+                if AuthStore.shared.isLoggedIn, let signed = await Self.signedIn(id: id) { return signed }
                 if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
                 throw AppError.noPlayableStream
             }
             if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
             // 「봇 확인」으로 막혔고 로그인돼 있으면: 로그인한 계정으로 재생 정보를 받는다
             if Self.blockedUntil.isBlocked, AuthStore.shared.isLoggedIn,
-               let signed = try? await Self.fetchLoggedIn(id: id) { return signed }
+               let signed = await Self.signedIn(id: id) { return signed }
             // 「봇 확인」 응답은 잠깐씩 섞여 온다 → 느린 방법(4~5초)으로 가기 전에 한 번만 빨리 다시
             try? await Task.sleep(nanoseconds: 250_000_000)
             if let again = try? await Self.fetchFromInnerTube(id: id) { return again }
@@ -195,6 +195,22 @@ actor StreamResolver {
     }
 
     // MARK: - 로그인 재생 (봇 확인으로 막혔을 때의 예비)
+
+    private static let tvFailures = FailCounter()
+    private static let tvReported = OnceFlag()
+
+    /// 로그인 재생: TV 앱 방식 먼저 (고화질·빠름), 안 되면 웹(watch 페이지 HLS)
+    private static func signedIn(id: String) async -> Entry? {
+        if tvFailures.allowed {
+            if let tv = try? await fetchTVLoggedIn(id: id) {
+                tvFailures.success()
+                if tvReported.once() { PlaybackDiag.report("tv-play", id: id, details: ["ok"]) }
+                return tv
+            }
+            tvFailures.failure()
+        }
+        return try? await fetchLoggedIn(id: id)
+    }
 
     /// Safari로 보는 watch 페이지를 로그인 쿠키와 함께 받아, 그 안의 재생 정보(HLS 주소)를 쓴다.
     /// 로그인된 요청은 「봇이 아님을 확인하세요」를 거의 받지 않는다. 일반 요청이 막혔을 때만 쓴다 (계정 부담 줄이기)
@@ -252,6 +268,12 @@ actor StreamResolver {
         }
         PlaybackDiag.note(String(format: "login-watch %@ status=%@ hls=%@ files=%d t=%.2f", id, status,
                                  hls == nil ? "N" : "Y", formats.count, Date().timeIntervalSince(t0)))
+        if hls == nil, let streaming {
+            let af = streaming["adaptiveFormats"] as? [[String: Any]] ?? []
+            PlaybackDiag.note("login-watch keys=" + streaming.keys.sorted().joined(separator: ",")
+                              + " adaptive=" + String(af.count) + " url=" + String(af.filter { $0["url"] != nil }.count)
+                              + " cipher=" + String(af.filter { $0["signatureCipher"] != nil }.count))
+        }
         guard status == "OK", hls != nil || !formats.isEmpty else { throw AppError.noPlayableStream }
         // 영상 서버가 요구하는 보안 토큰(PO 토큰): 로그인 세션 ID에 묶어 만든다 (없으면 방문자 ID)
         let session = firstMatch(html, #""DATASYNC_ID":"([^"|]*)"#).flatMap { $0.isEmpty ? nil : $0 }
@@ -369,6 +391,92 @@ actor StreamResolver {
 
     // MARK: - InnerTube player (iOS 클라이언트)
 
+    static let tvUserAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)"
+    static let tvClientVersion = "7.20250923.13.00"
+
+    /// 로그인한 계정으로 TV 앱 방식 재생 정보 → 서명·n 암호를 풀어 일반(IOS)과 같은 방법으로 재생
+    /// (보안 토큰이 필요 없고, 자체 HLS로 고화질·빠른 시작이 된다)
+    private static func fetchTVLoggedIn(id: String) async throws -> Entry {
+        guard let player = await currentPlayerPath(),
+              let sts = await NSigSolver.shared.prepare(playerPath: player) else {
+            PlaybackDiag.note("tv no player/sts")
+            throw AppError.noPlayableStream
+        }
+        var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(tvUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("7", forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(tvClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        for (k, v) in AuthStore.shared.headers(origin: "https://www.youtube.com") { request.setValue(v, forHTTPHeaderField: k) }
+        let body: [String: Any] = [
+            "context": ["client": ["clientName": "TVHTML5", "clientVersion": tvClientVersion, "userAgent": tvUserAgent,
+                                   "hl": "ko", "gl": "KR"]],
+            "videoId": id,
+            "playbackContext": ["contentPlaybackContext": ["html5Preference": "HTML5_PREF_WANTS", "signatureTimestamp": sts]],
+            "contentCheckOk": true,
+            "racyCheckOk": true,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await fetchFromInnerTube(id: id, prepared: request, tvPlayer: player)
+    }
+
+    /// 재생기 스크립트 주소: 로그인 watch 페이지에서 본 것, 없으면 iframe_api에서 찾는다
+    private static func currentPlayerPath() async -> String? {
+        if let known = await NSigSolver.shared.knownPlayerPath { return known }
+        var r = URLRequest(url: URL(string: "https://www.youtube.com/iframe_api")!)
+        r.setValue(safariUserAgent, forHTTPHeaderField: "User-Agent")
+        guard let (d, _) = try? await URLSession.shared.data(for: r) else { return nil }
+        let text = String(decoding: d, as: UTF8.self)
+        guard let pid = firstMatch(text, #"player\\?/([0-9a-fA-F]{8})\\?/"#) else { return nil }
+        return "/s/player/\(pid)/player_ias.vflset/en_US/base.js"
+    }
+
+    /// TV 응답의 영상 파일 주소: signatureCipher(s · sp · url)와 n을 풀어 바로 쓸 수 있는 url로 바꾼다
+    private static func decipher(_ streaming: [String: Any], player: String) async -> [String: Any] {
+        var out = streaming
+        var nIn: [String] = [], sIn: [String] = []
+        func parts(_ f: [String: Any]) -> (url: URLComponents, s: String?, sp: String)? {
+            if let u = f["url"] as? String, let c = URLComponents(string: u) { return (c, nil, "sig") }
+            guard let cipher = f["signatureCipher"] as? String,
+                  let q = URLComponents(string: "?" + cipher)?.queryItems,
+                  let u = q.first(where: { $0.name == "url" })?.value, let c = URLComponents(string: u) else { return nil }
+            return (c, q.first { $0.name == "s" }?.value, q.first { $0.name == "sp" }?.value ?? "signature")
+        }
+        for key in ["adaptiveFormats", "formats"] {
+            for f in streaming[key] as? [[String: Any]] ?? [] {
+                guard let p = parts(f) else { continue }
+                if let s = p.s { sIn.append(s) }
+                if let n = p.url.queryItems?.first(where: { $0.name == "n" })?.value { nIn.append(n) }
+            }
+        }
+        let solved = await NSigSolver.shared.solve(n: nIn, sig: sIn, playerPath: player)
+        for key in ["adaptiveFormats", "formats"] {
+            out[key] = (streaming[key] as? [[String: Any]] ?? []).compactMap { f -> [String: Any]? in
+                guard var p = parts(f) else { return nil }
+                var items = p.url.queryItems ?? []
+                if let n = items.first(where: { $0.name == "n" })?.value {
+                    guard let v = solved.n[n] else { return nil }
+                    items = items.map { $0.name == "n" ? URLQueryItem(name: "n", value: v) : $0 }
+                }
+                if let s = p.s {
+                    guard let v = solved.sig[s] else { return nil }
+                    items.append(URLQueryItem(name: p.sp, value: v))
+                }
+                p.url.queryItems = items
+                guard let url = p.url.url?.absoluteString else { return nil }
+                var g = f
+                g["url"] = url
+                g["signatureCipher"] = nil
+                return g
+            }
+        }
+        return out
+    }
+
     private static func fetchFromInnerTube(id: String) async throws -> Entry {
         var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
         request.httpMethod = "POST"
@@ -398,7 +506,11 @@ actor StreamResolver {
             "racyCheckOk": true,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await fetchFromInnerTube(id: id, prepared: request, tvPlayer: nil)
+    }
 
+    private static func fetchFromInnerTube(id: String, prepared request: URLRequest, tvPlayer: String?) async throws -> Entry {
+        let tv = tvPlayer != nil
         let tStart = Date()
         let (data, response) = try await URLSession.shared.data(for: request)
         let playerTime = Date().timeIntervalSince(tStart)
@@ -407,14 +519,18 @@ actor StreamResolver {
         guard let json, playability?["status"] as? String == "OK",
               let streaming = json["streamingData"] as? [String: Any]
         else {
-            PlaybackDiag.note("player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")")
-            if playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 2) }
+            PlaybackDiag.note((tv ? "tv " : "") + "player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")")
+            if !tv, playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 2) }
             throw AppError.noPlayableStream
         }
 
-        StreamResolver.blockedUntil.clear()
+        if !tv { StreamResolver.blockedUntil.clear() }
         CaptionStore.shared.save(id, json["captions"])
+        var streaming = streaming
+        if let tvPlayer { streaming = await decipher(streaming, player: tvPlayer) }
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
+        if tv { PlaybackDiag.note("tv " + id + " formats=" + String(formats.count)) }
+        if tv, formats.isEmpty { throw AppError.noPlayableStream }
         // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
         let allAudio = formats.filter { $0.isAudio }
         let notDubbed = allAudio.filter { !$0.isAutoDubbed }
@@ -438,7 +554,7 @@ actor StreamResolver {
         // 오디오 재생목록 · 영상 재생목록 · "앞부분만 허용" 검사를 동시에 진행 (차례로 하면 시작이 늦어진다)
         // 쇼츠처럼 짧은 영상(90초 이하)은 "앞부분만 허용" 검사가 필요 없다 (허용되는 앞부분이 1분 이상)
         let lengthSeconds = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init) ?? 0
-        let needsGateCheck = lengthSeconds > 90
+        let needsGateCheck = !tv && lengthSeconds > 90
         let tPaths = Date()
         async let audioPathTask = Self.audioPath(id: id, audio: audioFormat)
         async let videoPathTask = Self.videoPath(id: id, videos: videoFormats, audio: audioFormat)
@@ -1203,6 +1319,20 @@ enum PlaybackDiag {
     }
 }
 
+
+/// 연속 3번 실패하면 30분 동안 쉬기
+final class FailCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fails = 0
+    private var pausedUntil = Date.distantPast
+    var allowed: Bool { lock.lock(); defer { lock.unlock() }; return Date() >= pausedUntil }
+    func success() { lock.lock(); fails = 0; lock.unlock() }
+    func failure() {
+        lock.lock(); fails += 1
+        if fails >= 3 { pausedUntil = Date().addingTimeInterval(1800); fails = 0 }
+        lock.unlock()
+    }
+}
 
 /// 한 번만 true
 final class OnceFlag: @unchecked Sendable {

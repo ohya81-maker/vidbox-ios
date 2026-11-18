@@ -13,6 +13,36 @@ actor NSigSolver {
     private var preprocessed: String?
     private var memo: [String: String] = [:]
     private(set) var lastError: String?
+    private var sts: Int?
+    var knownPlayerPath: String? { playerURL }
+
+    /// 재생기 스크립트를 준비하고 signatureTimestamp를 돌려준다 (TV 방식 요청에 필요)
+    func prepare(playerPath: String) async -> Int? {
+        do { try await load(playerPath) } catch { lastError = "\(error)"; return nil }
+        return sts
+    }
+
+    /// n · 서명(sig) 함께 풀기
+    func solve(n: [String], sig: [String], playerPath: String) async -> (n: [String: String], sig: [String: String]) {
+        do {
+            try await load(playerPath)
+            let nTodo = n.filter { memo[$0] == nil }
+            if !nTodo.isEmpty || !sig.isEmpty {
+                let (nm, sm) = try run(n: Array(Set(nTodo)), sig: Array(Set(sig)))
+                memo.merge(nm) { _, new in new }
+                var nOut: [String: String] = [:]
+                for i in n { if let v = memo[i] { nOut[i] = v } }
+                return (nOut, sm)
+            }
+            var nOut: [String: String] = [:]
+            for i in n { if let v = memo[i] { nOut[i] = v } }
+            return (nOut, [:])
+        } catch {
+            lastError = "\(error)"
+            PlaybackDiag.note("sig fail: " + String(String(describing: error).prefix(200)))
+            return ([:], [:])
+        }
+    }
 
     /// n 값들을 푼다. 실패하면 빈 사전
     func solveN(_ inputs: [String], playerPath: String) async -> [String: String] {
@@ -20,7 +50,7 @@ actor NSigSolver {
         if !todo.isEmpty {
             do {
                 try await load(playerPath)
-                let solved = try run(n: todo)
+                let solved = try run(n: todo, sig: []).0
                 memo.merge(solved) { _, new in new }
                 if memo.count > 500 { memo.removeAll() }
             } catch {
@@ -41,6 +71,9 @@ actor NSigSolver {
         let (data, _) = try await URLSession.shared.data(for: request)
         let js = String(decoding: data, as: UTF8.self)
         guard js.count > 10_000 else { throw SolveError.badPlayer }
+        if let r = js.range(of: #"(?:signatureTimestamp|sts)\s*:\s*(\d{5})"#, options: .regularExpression) {
+            sts = Int(js[r].filter(\.isNumber).suffix(5))
+        }
         ctx = try makeContext()
         playerURL = path
         preprocessed = nil
@@ -83,10 +116,14 @@ actor NSigSolver {
         return c
     }
 
-    private func run(n: [String]) throws -> [String: String] {
+    private func run(n: [String], sig: [String]) throws -> ([String: String], [String: String]) {
         guard let ctx else { throw SolveError.context }
+        var requests: [[String: Any]] = []
+        if !n.isEmpty { requests.append(["type": "n", "challenges": n]) }
+        if !sig.isEmpty { requests.append(["type": "sig", "challenges": sig]) }
+        if requests.isEmpty { return ([:], [:]) }
         var input: [String: Any] = [
-            "requests": [["type": "n", "challenges": n]],
+            "requests": requests,
         ]
         if let preprocessed {
             input["type"] = "preprocessed_player"
@@ -105,11 +142,16 @@ actor NSigSolver {
             preprocessed = pre
             playerJS = ""
         }
-        guard let items = out["responses"] as? [[String: Any]], let first = items.first else {
+        guard let items = out["responses"] as? [[String: Any]], !items.isEmpty else {
             throw SolveError.message((out["error"] as? String) ?? "no responses")
         }
-        if let err = first["error"] as? String { throw SolveError.message(err) }
-        return (first["data"] as? [String: String]) ?? [:]
+        var nMap: [String: String] = [:], sMap: [String: String] = [:]
+        for (req, item) in zip(requests, items) {
+            if let err = item["error"] as? String { throw SolveError.message(err) }
+            let data = (item["data"] as? [String: String]) ?? [:]
+            if req["type"] as? String == "n" { nMap = data } else { sMap = data }
+        }
+        return (nMap, sMap)
     }
 
     enum SolveError: Error, CustomStringConvertible {

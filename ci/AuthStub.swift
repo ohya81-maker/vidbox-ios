@@ -17,4 +17,7 @@ actor NSigSolver {
     static let shared = NSigSolver()
     var lastError: String?
     func solveN(_ inputs: [String], playerPath: String) async -> [String: String] { [:] }
+    var knownPlayerPath: String? { nil }
+    func prepare(playerPath: String) async -> Int? { nil }
+    func solve(n: [String], sig: [String], playerPath: String) async -> (n: [String: String], sig: [String: String]) { ([:], [:]) }
 }
