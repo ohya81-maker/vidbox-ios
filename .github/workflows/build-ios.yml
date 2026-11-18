@@ -31,7 +31,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 8
         run: |
-          swiftc -O ci/main.swift Vidbox/StreamResolver.swift Vidbox/Models.swift -o playtest
+          swiftc -O ci/main.swift ci/AuthStub.swift Vidbox/StreamResolver.swift Vidbox/Models.swift -o playtest
           ./playtest
 
       - name: Install XcodeGen

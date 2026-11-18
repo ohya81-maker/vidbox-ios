@@ -205,14 +205,40 @@ actor StreamResolver {
         PlaybackDiag.note(String(format: "login-watch %@ status=%@ hls=%@ files=%d t=%.2f", id, status,
                                  hls == nil ? "N" : "Y", formats.count, Date().timeIntervalSince(t0)))
         guard status == "OK", hls != nil || !formats.isEmpty else { throw AppError.noPlayableStream }
+        // 영상 서버가 요구하는 보안 토큰(PO 토큰): 로그인 세션 ID에 묶어 만든다 (없으면 방문자 ID)
+        let session = firstMatch(html, #""DATASYNC_ID":"([^"|]*)"#).flatMap { $0.isEmpty ? nil : $0 }
+        let binding = session ?? firstMatch(html, #""VISITOR_DATA":"([^"]+)""#) ?? ""
+        let pot = binding.isEmpty ? nil : await PoTokenProvider.shared.token(binding: binding)
         // 로그인 재생이 실제로 되는지 확인용 (앱 실행마다 처음 한 번만 기록)
-        if loginReported.once() { PlaybackDiag.report("login-play", id: id, details: ["hls=\(hls != nil)", "files=\(formats.count)"]) }
+        if loginReported.once() {
+            let err = await PoTokenProvider.shared.lastError ?? "-"
+            PlaybackDiag.report("login-play", id: id, details: ["hls=\(hls != nil)", "files=\(formats.count)",
+                                                              "binding=\(session != nil ? "session" : binding.isEmpty ? "none" : "visitor")",
+                                                              "pot=\(pot.map { "len\($0.count)" } ?? "fail: \(err)")"])
+        }
         CaptionStore.shared.save(id, json["captions"])
         var video: [PlaybackSource] = []
-        if let hls { video.append(.single(hls)) }
-        video += formats.map { .single($0) }
+        if let hls {
+            if let pot, let withPot = URL(string: hls.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/pot/" + pot) {
+                video.append(.single(withPot))
+            } else {
+                video.append(.single(hls))
+            }
+        }
+        video += formats.map { url in
+            guard let pot, var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return .single(url) }
+            c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "pot", value: pot)]
+            return .single(c.url ?? url)
+        }
         let length = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init)
         return Entry(video: video, audio: video, date: Date(), length: length)
+    }
+
+    private static func firstMatch(_ text: String, _ pattern: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)), m.numberOfRanges > 1,
+              let r = Range(m.range(at: 1), in: text) else { return nil }
+        return String(text[r])
     }
 
     /// HTML 안의 `name = {...};` 에서 JSON 객체 부분만 잘라낸다 (문자열 안의 괄호는 건너뜀)
