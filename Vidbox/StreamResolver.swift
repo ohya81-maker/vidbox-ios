@@ -139,6 +139,10 @@ actor StreamResolver {
             return nil
         }
         PlaybackDiag.note("login-retry \(id) ok")
+        // 거절된 영상: 화질별로 어디서 거절되는지 (앱 실행마다 한 번)
+        if let first = entry.video.first, case .single(let url) = first, Self.failProbed.once() {
+            Task.detached { await Self.probeHLS(url, id: id) }
+        }
         cache[id] = entry
         let list = audioOnly ? entry.audio + entry.video : entry.video + entry.audio
         return list.isEmpty ? nil : list
@@ -286,6 +290,7 @@ actor StreamResolver {
     }
 
     private static let hlsProbed = OnceFlag()
+    private static let failProbed = OnceFlag()
 
     private static func probeHLS(_ master: URL, id: String) async {
         var out: [String] = []
@@ -308,19 +313,21 @@ actor StreamResolver {
             let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.map(\.name) ?? []
             return (names + q.map { "?" + $0 }).joined(separator: ",")
         }
-        out.append("master=" + keys(master))
         let (ms, mtext) = await get(master)
         out.append("masterStatus=\(ms)")
-        guard let vLine = mtext.split(separator: "\n").first(where: { $0.hasPrefix("http") }), let variant = URL(string: String(vLine)) else {
-            PlaybackDiag.report("hls-probe", id: id, details: out); return
-        }
-        out.append("variant=" + keys(variant))
-        let (vs, vtext) = await get(variant)
-        out.append("variantStatus=\(vs)")
-        if let sLine = vtext.split(separator: "\n").first(where: { $0.hasPrefix("http") }), let seg = URL(string: String(sLine)) {
-            out.append("segment=" + keys(seg))
-            let (ss, _) = await get(seg, range: true)
-            out.append("segmentStatus=\(ss)")
+        // 화질(해상도)별로 첫 조각이 받아지는지: 어느 화질이 거절되는지 확인
+        let lines = mtext.split(separator: "\n").map(String.init)
+        var checked = 0
+        for (i, line) in lines.enumerated() where line.hasPrefix("#EXT-X-STREAM-INF") && checked < 10 {
+            guard i + 1 < lines.count, let variant = URL(string: lines[i + 1]) else { continue }
+            checked += 1
+            let res = line.range(of: #"RESOLUTION=(\d+x\d+)"#, options: .regularExpression).map { String(line[$0].dropFirst(11)) } ?? "audio"
+            let (vs, vtext) = await get(variant)
+            var segStatus = -2
+            if let sLine = vtext.split(separator: "\n").first(where: { $0.hasPrefix("http") }), let seg = URL(string: String(sLine)) {
+                segStatus = await get(seg, range: true).0
+            }
+            out.append("\(res) v\(vs) s\(segStatus)")
         }
         PlaybackDiag.report("hls-probe", id: id, details: out)
     }
@@ -573,7 +580,12 @@ actor StreamResolver {
         }
         switch source {
         case .single(let url), .limited(let url):
-            return AVPlayerItem(asset: AVURLAsset(url: url, options: options))
+            let item = AVPlayerItem(asset: AVURLAsset(url: url, options: options))
+            // 로그인 재생(웹 방식 HLS)은 720p 넘는 화질이 영상 서버에서 거절된다(403) → 720p까지만 고르게
+            if url.path.contains("/pot/") {
+                item.preferredMaximumResolution = CGSize(width: 1280, height: 1280)
+            }
+            return item
 
         case .local(let path):
             let base = try await LocalHLS.shared.baseURL()
