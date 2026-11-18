@@ -270,9 +270,11 @@ actor StreamResolver {
                                  hls == nil ? "N" : "Y", formats.count, Date().timeIntervalSince(t0)))
         if hls == nil, let streaming {
             let af = streaming["adaptiveFormats"] as? [[String: Any]] ?? []
-            PlaybackDiag.note("login-watch keys=" + streaming.keys.sorted().joined(separator: ",")
-                              + " adaptive=" + String(af.count) + " url=" + String(af.filter { $0["url"] != nil }.count)
-                              + " cipher=" + String(af.filter { $0["signatureCipher"] != nil }.count))
+            let keyList: String = streaming.keys.sorted().joined(separator: ",")
+            let withURL: Int = af.filter { $0["url"] != nil }.count
+            let withCipher: Int = af.filter { $0["signatureCipher"] != nil }.count
+            let line: String = "login-watch keys=\(keyList) adaptive=\(af.count) url=\(withURL) cipher=\(withCipher)"
+            PlaybackDiag.note(line)
         }
         guard status == "OK", hls != nil || !formats.isEmpty else { throw AppError.noPlayableStream }
         // 영상 서버가 요구하는 보안 토큰(PO 토큰): 로그인 세션 ID에 묶어 만든다 (없으면 방문자 ID)
@@ -517,19 +519,21 @@ actor StreamResolver {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         let playability = json?["playabilityStatus"] as? [String: Any]
         guard let json, playability?["status"] as? String == "OK",
-              let streaming = json["streamingData"] as? [String: Any]
+              let streamingData = json["streamingData"] as? [String: Any]
         else {
-            PlaybackDiag.note((tv ? "tv " : "") + "player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")")
+            let prefix: String = tv ? "tv " : ""
+            let msg: String = "player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")"
+            PlaybackDiag.note(prefix + msg)
             if !tv, playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 2) }
             throw AppError.noPlayableStream
         }
 
         if !tv { StreamResolver.blockedUntil.clear() }
         CaptionStore.shared.save(id, json["captions"])
-        var streaming = streaming
+        var streaming: [String: Any] = streamingData
         if let tvPlayer { streaming = await decipher(streaming, player: tvPlayer) }
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
-        if tv { PlaybackDiag.note("tv " + id + " formats=" + String(formats.count)) }
+        if tv { PlaybackDiag.note("tv \(id) formats=\(formats.count)") }
         if tv, formats.isEmpty { throw AppError.noPlayableStream }
         // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
         let allAudio = formats.filter { $0.isAudio }
