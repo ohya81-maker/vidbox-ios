@@ -97,9 +97,10 @@ actor StreamResolver {
     static let blockedUntil = BlockClock()
 
     func prefetch(_ ids: [String]) {
-        // 차단 응답 뒤에도 바로 다음 1개만은 천천히 미리 받는다 (넘길 때마다 처음부터 받느라 멈칫하지 않게)
+        // 「봇 확인」으로 막힌 동안은 미리 받기를 아예 하지 않는다 (요청이 쌓이면 차단이 더 오래 간다)
         let blocked = Self.blockedUntil.isBlocked
-        let targets = blocked ? Array(ids.prefix(1)) : ids
+        if blocked { return }
+        let targets = ids
         for id in targets where !id.hasPrefix("jf:") {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
             guard inflight[id] == nil, prefetching < 3 else { continue }
@@ -125,6 +126,7 @@ actor StreamResolver {
 
     /// 마지막 수단: YouTubeKit (느림)
     func slowCandidates(id: String, audioOnly: Bool) async throws -> [PlaybackSource] {
+        if Self.blockedUntil.isBlocked { throw AppError.noPlayableStream }
         let entry = try await Self.fetchWithYouTubeKit(id: id)
         let list = audioOnly ? entry.audio + entry.video : entry.video + entry.audio
         guard !list.isEmpty else { throw AppError.noPlayableStream }
@@ -139,6 +141,11 @@ actor StreamResolver {
             return try await running.value
         }
         let task = Task<Entry, Error> {
+            // 이미 막힌 상태면 한 번만 확인하고 끝낸다 (다른 방법들로 여러 번 다시 묻지 않기 — 차단을 길게 만든다)
+            if Self.blockedUntil.isBlocked {
+                if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
+                throw AppError.noPlayableStream
+            }
             if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
             // 「봇 확인」 응답은 잠깐씩 섞여 온다 → 느린 방법(4~5초)으로 가기 전에 한 번만 빨리 다시
             try? await Task.sleep(nanoseconds: 250_000_000)
@@ -148,6 +155,7 @@ actor StreamResolver {
                 PlaybackDiag.note("fallback android-muxed \(id)")
                 return Entry(video: [.single(muxed)], audio: [], date: Date())
             }
+            if Self.blockedUntil.isBlocked { throw AppError.noPlayableStream }
             return try await Self.fetchWithYouTubeKit(id: id)
         }
         inflight[id] = task
@@ -202,6 +210,7 @@ actor StreamResolver {
             throw AppError.noPlayableStream
         }
 
+        StreamResolver.blockedUntil.clear()
         CaptionStore.shared.save(id, json["captions"])
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
         // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
@@ -994,6 +1003,7 @@ final class BlockClock: @unchecked Sendable {
     private var until = Date.distantPast
     var isBlocked: Bool { lock.lock(); defer { lock.unlock() }; return Date() < until }
     func block(minutes: Double) { lock.lock(); until = Date().addingTimeInterval(minutes * 60); lock.unlock() }
+    func clear() { lock.lock(); until = .distantPast; lock.unlock() }
 }
 
 
