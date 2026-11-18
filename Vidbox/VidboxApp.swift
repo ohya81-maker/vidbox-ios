@@ -7,6 +7,12 @@ struct VidboxApp: App {
     @StateObject private var library = LibraryStore.shared
     @StateObject private var account = AccountStore.shared
 
+    #if targetEnvironment(simulator)
+    static let requiresLogin = false
+    #else
+    static let requiresLogin = true
+    #endif
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -14,6 +20,11 @@ struct VidboxApp: App {
                 .environmentObject(library)
                 .environmentObject(account)
                 .tint(.primary)
+                // YouTube 로그인 필수: 로그인해야 봇 확인으로 막혀도 계속 재생된다 (CI 시뮬레이터는 제외)
+                .fullScreenCover(isPresented: .constant(Self.requiresLogin && !account.isLoggedIn)) {
+                    LoginView(required: true)
+                        .interactiveDismissDisabled()
+                }
         }
     }
 }

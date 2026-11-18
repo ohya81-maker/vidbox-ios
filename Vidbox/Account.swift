@@ -154,6 +154,8 @@ final class AccountStore: ObservableObject {
 // MARK: - Google 로그인 화면 (웹뷰)
 
 struct LoginView: View {
+    /// true면 취소 없이 로그인해야만 닫힌다 (앱 시작 시 로그인 필수)
+    var required = false
     @Environment(\.dismiss) private var dismiss
     @State private var isLoading = true
 
@@ -171,8 +173,22 @@ struct LoginView: View {
             .navigationTitle("YouTube 로그인")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { dismiss() }
+                if !required {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("취소") { dismiss() }
+                    }
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                if required {
+                    Text("K-TUBE는 YouTube 계정으로 로그인해야 영상이 막힘 없이 재생돼요.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        .background(.bar)
                 }
             }
         }

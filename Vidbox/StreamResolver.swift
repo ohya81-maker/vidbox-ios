@@ -101,7 +101,7 @@ actor StreamResolver {
         // 단, 로그인돼 있으면 로그인 재생으로 다음 1개만 미리 받는다 (쇼츠가 멈칫하지 않게)
         let blocked = Self.blockedUntil.isBlocked
         if blocked && !AuthStore.shared.isLoggedIn { return }
-        let targets = blocked ? Array(ids.prefix(1)) : ids
+        let targets = blocked ? Array(ids.prefix(3)) : ids
         for id in targets where !id.hasPrefix("jf:") {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
             guard inflight[id] == nil, prefetching < 3 else { continue }
@@ -213,6 +213,7 @@ actor StreamResolver {
                 let map = await NSigSolver.shared.solveN(inputs, playerPath: playerPath)
                 let solverErr = await NSigSolver.shared.lastError ?? "-"
                 nState = map.isEmpty ? "fail: " + solverErr : String(format: "ok %.2fs", Date().timeIntervalSince(t1))
+                if map.isEmpty { PlaybackDiag.note("login-n \(id) " + nState) }
                 if let h = hls, let n = pathValue(h, "n"), let solved = map[n] {
                     hls = URL(string: h.absoluteString.replacingOccurrences(of: "/n/\(n)/", with: "/n/\(solved)/"))
                 }
