@@ -612,12 +612,12 @@ struct ShortPage: View {
 
     var body: some View {
         GeometryReader { geo in
-            // 영상 칸: 상태바 아래부터 하단 탭바(약 64pt) 위까지
+            // 영상 칸: 상태바 아래부터 하단 탭바 위까지
             let isPad = UIDevice.current.userInterfaceIdiom == .pad
             // 아이패드: 아래 탭바 높이만 비우고 위아래를 꽉 채운다
             let usable = isPad
                 ? geo.size.height - topInset - max(bottomInset, 74) - 4
-                : geo.size.height - topInset - bottomInset - 64
+                : geo.size.height - topInset - bottomInset  // bottomInset에 하단 탭바 높이가 이미 들어 있다
             // YouTube 앱처럼: 아이폰은 화면 폭 전체 · 상태바 아래부터 탭바 위까지, 아이패드는 위아래를 채운 세로 영상
             let boxHeight = isPad ? usable : max(0, usable)
             let boxWidth = isPad ? min(geo.size.width, boxHeight * 9 / 16) : geo.size.width
