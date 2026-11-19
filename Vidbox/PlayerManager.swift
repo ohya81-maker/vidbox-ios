@@ -142,6 +142,10 @@ final class PlayerManager: ObservableObject {
     private var usedSlowPath = false
     private var watchdog: Task<Void, Never>?
     private var userPaused = false
+    /// 재생 도중 멈춤 감시: 마지막으로 시간이 흐른 시각 · 영상별 복구 횟수
+    private var stallMonitor: Task<Void, Never>?
+    private var lastProgress: (time: Double, at: Date) = (-1, Date())
+    private var stallRecoveries: [String: Int] = [:]
     private var seekWatchdog: Task<Void, Never>?
     private var seekGeneration = 0
     private var seekRecoveryKey: String?
@@ -877,7 +881,51 @@ final class PlayerManager: ObservableObject {
         }
     }
 
+    /// 재생 도중 영상 조각을 못 받아 멈추면(대기 상태가 계속되거나 재생 항목이 실패) 10초 뒤
+    /// 재생 주소를 새로 받아 그 위치부터 다시 연다 (영상마다 최대 3번). 원인은 진단 기록으로 남긴다
+    private func startStallMonitor() {
+        stallMonitor?.cancel()
+        stallMonitor = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self else { return }
+                self.checkStall()
+            }
+        }
+    }
+
+    private func checkStall() {
+        guard let item = current, let playerItem = player.currentItem, !isLoading, errorMessage == nil else {
+            lastProgress = (-1, Date()); return
+        }
+        let t = player.currentTime().seconds
+        guard t.isFinite else { return }
+        if abs(t - lastProgress.time) > 0.2 || userPaused {
+            lastProgress = (t, Date()); return
+        }
+        // 끝까지 본 경우는 제외
+        if duration > 0, t >= duration - 1.5 { return }
+        let failed = playerItem.status == .failed || playerItem.error != nil
+        let waiting = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        guard failed || waiting, Date().timeIntervalSince(lastProgress.at) > 10 else { return }
+        let tries = stallRecoveries[item.id, default: 0]
+        lastProgress = (t, Date())
+        PlaybackDiag.report("video-stall", id: item.id, details: [
+            "at=\(Int(t))s", "try=\(tries + 1)", "source=\(sourceKind)", PlaybackDiag.describe(playerItem)])
+        guard tries < 3 else { return }
+        stallRecoveries[item.id] = tries + 1
+        if stallRecoveries.count > 200 { stallRecoveries.removeAll() }
+        // 같은 주소가 막힌 것일 수 있으니 저장된 재생 정보를 버리고 새로 받는다
+        let audio = audioOnly
+        Task { [weak self] in
+            await StreamResolver.shared.invalidate(item.id)
+            guard let self, self.current?.id == item.id else { return }
+            self.beginLoading(item: item, audio: audio, position: t, autoPlay: true)
+        }
+    }
+
     private func observePlayer() {
+        startStallMonitor()
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main
         ) { [weak self] time in

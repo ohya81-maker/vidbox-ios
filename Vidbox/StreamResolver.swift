@@ -679,7 +679,7 @@ actor StreamResolver {
         // 오디오 재생목록 · 영상 재생목록 · "앞부분만 허용" 검사를 동시에 진행 (차례로 하면 시작이 늦어진다)
         // 쇼츠처럼 짧은 영상(90초 이하)은 "앞부분만 허용" 검사가 필요 없다 (허용되는 앞부분이 1분 이상)
         let lengthSeconds = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init) ?? 0
-        let needsGateCheck = !tv && lengthSeconds > 90
+        let needsGateCheck = label != "tv" && lengthSeconds > 90
         let tPaths = Date()
         async let audioPathTask = Self.audioPath(id: id, audio: audioFormat)
         async let videoPathTask = Self.videoPath(id: id, videos: videoFormats, audio: audioFormat)
@@ -707,7 +707,9 @@ actor StreamResolver {
         // 끝까지 받아지는 Android 360p 합본 파일을 맨 앞에 둔다.
         let pathsTime = Date().timeIntervalSince(tPaths)
         var gatedMuxed: URL?
-        if await gatedTask, let full = try? await fetchAndroidMuxed(id: id) {
+        let gated = await gatedTask
+        if gated, label == "mweb" { PlaybackDiag.note("mweb gated \(id) muxed=\(muxed == nil ? "N" : "Y")") }
+        if gated, let full = label == "mweb" ? muxed : try? await fetchAndroidMuxed(id: id) {
             video.insert(.limited(full), at: 0)
             audio.insert(.limited(full), at: 0)
             gatedMuxed = full
