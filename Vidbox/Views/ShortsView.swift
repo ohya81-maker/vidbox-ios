@@ -436,7 +436,7 @@ struct ShortsView: View {
                     ForEach(Blocklist.shared.filter(feed.items)) { item in
                         ShortPage(item: item, isCurrent: item.id == currentID, shorts: shorts,
                                   // 아이패드: 돋보기는 오른쪽 끝이라 가운데 영상과 겹치지 않는다 → 영상을 상태바 바로 아래부터
-                                  topInset: topInset + (UIDevice.current.userInterfaceIdiom == .pad ? 0 : Self.topBar),
+                                  topInset: topInset,
                                   bottomInset: bottomInset)
                             .frame(width: geo.size.width, height: geo.size.height)
                             .id(item.id)
@@ -612,18 +612,15 @@ struct ShortPage: View {
 
     var body: some View {
         GeometryReader { geo in
-            // 영상은 화면 높이의 약 80%: 위쪽 상태바 아래부터, 하단 탭바 위까지 가리지 않게.
-            // 가로는 화면 폭 그대로, 세로 영상 비율(9:16)에 맞춰 높이를 정한다
-            // 하단 탭바(약 64pt)에 가리지 않게 빼고, 9:16 비율로 잘림 없이 맞춘다
+            // 영상 칸: 상태바 아래부터 하단 탭바(약 64pt) 위까지
             let isPad = UIDevice.current.userInterfaceIdiom == .pad
             // 아이패드: 아래 탭바 높이만 비우고 위아래를 꽉 채운다
             let usable = isPad
                 ? geo.size.height - topInset - max(bottomInset, 74) - 4
                 : geo.size.height - topInset - bottomInset - 64
-            // 아이패드: YouTube처럼 위아래를 꽉 채운 세로 영상
-            let boxHeight = isPad
-                ? usable : min(geo.size.width * 16 / 9, geo.size.height * 0.8, usable)
-            let boxWidth = min(geo.size.width, boxHeight * 9 / 16)
+            // YouTube 앱처럼: 아이폰은 화면 폭 전체 · 상태바 아래부터 탭바 위까지, 아이패드는 위아래를 채운 세로 영상
+            let boxHeight = isPad ? usable : max(0, usable)
+            let boxWidth = isPad ? min(geo.size.width, boxHeight * 9 / 16) : geo.size.width
             ZStack(alignment: .top) {
                 Color.black
                 ZStack {
@@ -684,8 +681,8 @@ struct ShortPage: View {
                         .allowsHitTesting(false)
                 }
                 .frame(width: boxWidth, height: boxHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .padding(.top, topInset + 4)
+                .clipShape(RoundedRectangle(cornerRadius: isPad ? 16 : 0, style: .continuous))
+                .padding(.top, isPad ? topInset + 4 : topInset)
                 .frame(maxWidth: .infinity)
             }
         }
