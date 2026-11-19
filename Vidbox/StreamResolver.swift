@@ -679,7 +679,8 @@ actor StreamResolver {
         // 오디오 재생목록 · 영상 재생목록 · "앞부분만 허용" 검사를 동시에 진행 (차례로 하면 시작이 늦어진다)
         // 쇼츠처럼 짧은 영상(90초 이하)은 "앞부분만 허용" 검사가 필요 없다 (허용되는 앞부분이 1분 이상)
         let lengthSeconds = ((json["videoDetails"] as? [String: Any])?["lengthSeconds"] as? String).flatMap(Double.init) ?? 0
-        let needsGateCheck = label != "tv" && lengthSeconds > 90
+        // 모바일 웹(MWEB)은 1분 남짓에서 막히는 일이 있어 60초 넘는 영상부터 확인
+        let needsGateCheck = label != "tv" && lengthSeconds > (label == "mweb" ? 60 : 90)
         let tPaths = Date()
         async let audioPathTask = Self.audioPath(id: id, audio: audioFormat)
         async let videoPathTask = Self.videoPath(id: id, videos: videoFormats, audio: audioFormat)
