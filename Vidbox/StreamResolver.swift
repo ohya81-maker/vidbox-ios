@@ -568,6 +568,7 @@ actor StreamResolver {
             }
         }
         let solved = await NSigSolver.shared.solve(n: nIn, sig: sIn, playerPath: player)
+        PlaybackDiag.note("decipher n=\(solved.n.count)/\(Set(nIn).count) sig=\(solved.sig.count)/\(Set(sIn).count)")
         for key in ["adaptiveFormats", "formats"] {
             out[key] = (streaming[key] as? [[String: Any]] ?? []).compactMap { f -> [String: Any]? in
                 guard var p = parts(f) else { return nil }
@@ -652,7 +653,11 @@ actor StreamResolver {
             let raw: Int = (streamingData["adaptiveFormats"] as? [[String: Any]])?.count ?? 0
             let keyList: String = streamingData.keys.sorted().joined(separator: ",")
             let potMark: String = pot == nil ? "N" : "Y"
-            let line: String = label + " " + id + " raw=" + String(raw) + " formats=" + String(formats.count) + " pot=" + potMark + " keys=" + keyList
+            let rawList: [[String: Any]] = streamingData["adaptiveFormats"] as? [[String: Any]] ?? []
+            let withURL: Int = rawList.filter { $0["url"] != nil }.count
+            let withCipher: Int = rawList.filter { $0["signatureCipher"] != nil }.count
+            let playerTag: String = String((tvPlayer ?? "-").split(separator: "/").dropFirst(2).first ?? "-")
+            let line: String = label + " " + id + " raw=" + String(raw) + " formats=" + String(formats.count) + " pot=" + potMark + " url=" + String(withURL) + " cipher=" + String(withCipher) + " js=" + playerTag + " keys=" + keyList
             PlaybackDiag.note(line)
         }
         if tv, formats.isEmpty { throw AppError.noPlayableStream }
