@@ -442,7 +442,9 @@ actor StreamResolver {
             throw AppError.noPlayableStream
         }
         let binding = web.datasync ?? web.visitor ?? ""
+        // 영상 서버용(pot=)은 계정 세션에, 재생 정보 요청용은 영상 ID에 묶는다 (일부 영상은 영상별 토큰이 없으면 파일이 403)
         let pot = binding.isEmpty ? nil : await PoTokenProvider.shared.token(binding: binding)
+        let playerToken = await PoTokenProvider.shared.token(binding: id)
         var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 8
@@ -466,8 +468,9 @@ actor StreamResolver {
             "contentCheckOk": true,
             "racyCheckOk": true,
         ]
-        if let pot { body["serviceIntegrityDimensions"] = ["poToken": pot] }
+        if let token = playerToken ?? pot { body["serviceIntegrityDimensions"] = ["poToken": token] }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        if playerToken == nil { PlaybackDiag.note("mweb player token fallback " + id) }
         return try await fetchFromInnerTube(id: id, prepared: request, tvPlayer: player, label: "mweb", pot: pot)
     }
 

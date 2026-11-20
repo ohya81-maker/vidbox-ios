@@ -12,30 +12,34 @@ final class PoTokenProvider: NSObject, WKNavigationDelegate {
     private var webView: WKWebView?
     private var ready = false
     private var loadWaiters: [CheckedContinuation<Void, Never>] = []
-    private var cached: (binding: String, token: String, expires: Date)?
-    private var running: Task<String?, Never>?
+    private var cached: [String: (token: String, expires: Date)] = [:]
+    private var running: [String: Task<String?, Never>] = [:]
     private(set) var lastError: String?
 
     /// binding(계정 세션 ID 또는 방문자 ID)에 묶인 토큰. 실패하면 nil
     func token(binding: String) async -> String? {
-        if let c = cached, c.binding == binding, Date() < c.expires { return c.token }
-        if let running { return await running.value }
+        if let c = cached[binding], Date() < c.expires { return c.token }
+        if let running = running[binding] { return await running.value }
         let task = Task<String?, Never> { await self.mint(binding: binding) }
-        running = task
+        running[binding] = task
         let value = await task.value
-        running = nil
+        running[binding] = nil
         return value
     }
 
     /// 재생이 403으로 거절되면 토큰을 버리고 다음에 새로 만든다
-    func invalidate() { cached = nil }
+    func invalidate() { cached.removeAll(); minterExpires = .distantPast }
+
+    /// 페이지 안에 만들어 둔 토큰 생성기(BotGuard 결과)의 유효 시각 — 지나면 새로 만든다
+    private var minterExpires = Date.distantPast
 
     private func mint(binding: String) async -> String? {
         let t0 = Date()
         await prepare()
         guard let webView else { lastError = "no webview"; return nil }
         do {
-            let result = try await webView.callAsyncJavaScript(Self.script, arguments: ["binding": binding],
+            let reuse = Date() < minterExpires
+            let result = try await webView.callAsyncJavaScript(Self.script, arguments: ["binding": binding, "reuse": reuse],
                                                                in: nil, contentWorld: .page)
             guard let text = result as? String,
                   let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
@@ -48,9 +52,13 @@ final class PoTokenProvider: NSObject, WKNavigationDelegate {
             guard let token = json["token"] as? String, !token.isEmpty else { lastError = "empty"; return nil }
             // 서버가 알려준 유효 시간보다 넉넉히 짧게 (우선 최대 1시간 — 안정되면 늘린다)
             let ttl = min((json["ttl"] as? Double) ?? 3600, 3600) * 0.8
-            cached = (binding, token, Date().addingTimeInterval(ttl))
+            if cached.count > 60 { cached = cached.filter { Date() < $0.value.expires } }
+            cached[binding] = (token, Date().addingTimeInterval(ttl))
+            if !reuse { minterExpires = Date().addingTimeInterval(ttl) }
             lastError = nil
-            PlaybackDiag.note(String(format: "pot ok len=%d ttl=%.0f t=%.2f", token.count, ttl, Date().timeIntervalSince(t0)))
+            if !reuse {
+                PlaybackDiag.note(String(format: "pot ok len=%d ttl=%.0f t=%.2f", token.count, ttl, Date().timeIntervalSince(t0)))
+            }
             return token
         } catch {
             lastError = error.localizedDescription
@@ -107,6 +115,10 @@ final class PoTokenProvider: NSObject, WKNavigationDelegate {
     const u8ToB64 = (u) => { let s = ''; for (const x of u) s += String.fromCharCode(x); return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_'); };
     const timeout = (ms, what) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout ' + what)), ms));
     const run = async () => {
+      if (reuse && globalThis.__ktMint) {
+        const o = await globalThis.__ktMint(new TextEncoder().encode(binding));
+        if (o instanceof Uint8Array) return JSON.stringify({token: u8ToB64(o), ttl: globalThis.__ktTTL || 3600});
+      }
       let r = await fetch('https://www.youtube.com/api/jnn/v1/Create', {method: 'POST', headers: H, body: JSON.stringify([RK])});
       if (!r.ok) throw new Error('create http ' + r.status);
       const raw = await r.json();
@@ -140,6 +152,7 @@ final class PoTokenProvider: NSObject, WKNavigationDelegate {
       if (typeof getMinter !== 'function') throw new Error('no minter');
       const mint = await getMinter(b64ToU8(it[0]));
       if (typeof mint !== 'function') throw new Error('minter not fn');
+      globalThis.__ktMint = mint; globalThis.__ktTTL = it[1] || 3600;
       const out = await mint(new TextEncoder().encode(binding));
       if (!(out instanceof Uint8Array)) throw new Error('mint result');
       return JSON.stringify({token: u8ToB64(out), ttl: it[1] || 3600});
