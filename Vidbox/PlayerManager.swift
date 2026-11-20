@@ -751,7 +751,10 @@ final class PlayerManager: ObservableObject {
         }
         guard current?.id == item.id else { return }
         isLoading = false
-        errorMessage = StreamResolver.blockedUntil.isBlocked
+        // 재생 정보는 받았는데 파일이 안 열린 경우는 봇 확인이 아니다
+        errorMessage = !candidates.isEmpty
+            ? "YouTube가 이 영상의 파일을 내주지 않아 지금은 재생할 수 없어요.\n잠시 뒤 다시 시도해 주세요."
+            : StreamResolver.blockedUntil.isBlocked
             ? (AuthStore.shared.isLoggedIn
                ? "YouTube가 이 인터넷 연결을 잠시 막았어요 (봇 확인).\n와이파이↔모바일 데이터를 바꾸거나 잠시 뒤 다시 시도해 주세요."
                : "YouTube가 이 인터넷 연결을 잠시 막았어요 (봇 확인).\n프로필에서 YouTube에 로그인하면 막혀도 재생할 수 있어요.")

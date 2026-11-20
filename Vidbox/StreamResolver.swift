@@ -714,7 +714,16 @@ actor StreamResolver {
         let pathsTime = Date().timeIntervalSince(tPaths)
         var gatedMuxed: URL?
         let gated = await gatedTask
-        if gated, label == "mweb" { PlaybackDiag.note("mweb gated \(id) muxed=\(muxed == nil ? "N" : "Y")") }
+        if gated, label == "mweb" {
+            PlaybackDiag.note("mweb gated \(id) muxed=\(muxed == nil ? "N" : "Y")")
+            // 합본 파일 앞부분이 실제로 받아지는지 (상태 코드 · 형식) 기록
+            // 재생 시작을 늦추지 않도록 따로 확인
+            let muxedURL = muxed, firstURL = videoFormats.first?.url
+            Task {
+                if let muxedURL { PlaybackDiag.note("mweb muxed probe " + id + " " + (await probeStatus(muxedURL))) }
+                if let firstURL { PlaybackDiag.note("mweb video probe " + id + " " + (await probeStatus(firstURL))) }
+            }
+        }
         if gated, let full = label == "mweb" ? muxed : try? await fetchAndroidMuxed(id: id) {
             video.insert(.limited(full), at: 0)
             audio.insert(.limited(full), at: 0)
@@ -738,6 +747,23 @@ actor StreamResolver {
     private static func videoPath(id: String, videos: [DashFormat], audio: DashFormat?) async -> String? {
         guard let audio, !videos.isEmpty else { return nil }
         return try? await LocalHLS.shared.buildVideo(id: id, videos: videos, audio: audio)
+    }
+
+    /// 진단용: 파일 앞 1KB 요청 결과 (상태 · 형식 · 걸린 시간)
+    private static func probeStatus(_ url: URL) async -> String {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 4
+        request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+        request.setValue(mwebUserAgent, forHTTPHeaderField: "User-Agent")
+        let t = Date()
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let http = response as? HTTPURLResponse
+            return String(format: "http=%d type=%@ bytes=%d t=%.2f", http?.statusCode ?? 0,
+                          http?.value(forHTTPHeaderField: "Content-Type") ?? "-", data.count, Date().timeIntervalSince(t))
+        } catch {
+            return String(format: "err=%@ t=%.2f", String(String(describing: error).prefix(80)), Date().timeIntervalSince(t))
+        }
     }
 
     private static func probeGated(_ format: DashFormat?) async -> Bool {
