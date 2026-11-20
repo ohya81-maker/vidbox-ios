@@ -211,7 +211,7 @@ actor StreamResolver {
         var mwebTried = false
         if webSabrOnly.isBlocked, webSession.current != nil, mwebFailures.allowed {
             mwebTried = true
-            if let m = try? await fetchMWebLoggedIn(id: id) {
+            if let m = try? await fetchMWebChecked(id: id) {
                 mwebFailures.success()
                 if mwebReported.once() { PlaybackDiag.report("mweb-play", id: id, details: ["ok", "fast"]) }
                 return m
@@ -220,7 +220,7 @@ actor StreamResolver {
         }
         if let web = try? await fetchLoggedIn(id: id) { return web }
         if !mwebTried, mwebFailures.allowed {
-            if let m = try? await fetchMWebLoggedIn(id: id) {
+            if let m = try? await fetchMWebChecked(id: id) {
                 mwebFailures.success()
                 if mwebReported.once() { PlaybackDiag.report("mweb-play", id: id, details: ["ok"]) }
                 return m
@@ -430,7 +430,37 @@ actor StreamResolver {
     static let mwebClientVersion = "2.20250925.01.00"
 
     /// 로그인한 계정으로 모바일 웹(MWEB) 재생 정보 → 서명·n을 풀고 보안 토큰(pot)을 붙여 자체 HLS로 재생
-    private static func fetchMWebLoggedIn(id: String) async throws -> Entry {
+    /// 모바일 웹 결과의 파일이 403이면(일부 방송사 영상) YouTube Music 웹 방식으로 한 번 더 받아 본다
+    private static func fetchMWebChecked(id: String) async throws -> Entry {
+        let m = try await fetchMWebLoggedIn(id: id)
+        guard let url = m.downloadVideo?.url ?? m.downloadMuxed, await fileStatus(url) == 403 else { return m }
+        PlaybackDiag.note("mweb files 403 " + id + " params=" + queryKeys(url))
+        guard let music = try? await fetchMWebLoggedIn(id: id, music: true) else {
+            PlaybackDiag.note("music player fail " + id); return m
+        }
+        let musicURL = music.downloadVideo?.url ?? music.downloadMuxed
+        var code = 0
+        if let musicURL { code = await fileStatus(musicURL) }
+        PlaybackDiag.note("music files " + id + " http=" + String(code) + (musicURL.map { " params=" + queryKeys($0) } ?? ""))
+        return code == 403 ? m : music
+    }
+
+    private static func fileStatus(_ url: URL) async -> Int {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+        request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+        request.setValue(mwebUserAgent, forHTTPHeaderField: "User-Agent")
+        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return 0 }
+        return (response as? HTTPURLResponse)?.statusCode ?? 0
+    }
+
+    private static func queryKeys(_ url: URL) -> String {
+        (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map(\.name).joined(separator: ",")
+    }
+
+    static let musicClientVersion = "1.20251117.01.00"
+
+    private static func fetchMWebLoggedIn(id: String, music: Bool = false) async throws -> Entry {
         guard let web = webSession.current else {
             PlaybackDiag.note("mweb no web session")
             throw AppError.noPlayableStream
@@ -445,17 +475,21 @@ actor StreamResolver {
         // 영상 서버용(pot=)은 계정 세션에, 재생 정보 요청용은 영상 ID에 묶는다 (일부 영상은 영상별 토큰이 없으면 파일이 403)
         let pot = binding.isEmpty ? nil : await PoTokenProvider.shared.token(binding: binding)
         let playerToken = await PoTokenProvider.shared.token(binding: id)
-        var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
+        // music: YouTube Music 웹(WEB_REMIX) — 같은 계정 · 같은 토큰, 다른 사이트
+        let origin = music ? "https://music.youtube.com" : "https://www.youtube.com"
+        let ua = music ? safariUserAgent : mwebUserAgent
+        let version = music ? musicClientVersion : mwebClientVersion
+        var request = URLRequest(url: URL(string: origin + "/youtubei/v1/player?prettyPrint=false")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 8
         request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(mwebUserAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("2", forHTTPHeaderField: "X-Youtube-Client-Name")
-        request.setValue(mwebClientVersion, forHTTPHeaderField: "X-Youtube-Client-Version")
-        request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        for (k, v) in AuthStore.shared.headers(origin: "https://www.youtube.com") { request.setValue(v, forHTTPHeaderField: k) }
-        var client: [String: Any] = ["clientName": "MWEB", "clientVersion": mwebClientVersion, "userAgent": mwebUserAgent,
+        request.setValue(ua, forHTTPHeaderField: "User-Agent")
+        request.setValue(music ? "67" : "2", forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(version, forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue(origin, forHTTPHeaderField: "Origin")
+        for (k, v) in AuthStore.shared.headers(origin: origin) { request.setValue(v, forHTTPHeaderField: k) }
+        var client: [String: Any] = ["clientName": music ? "WEB_REMIX" : "MWEB", "clientVersion": version, "userAgent": ua,
                                      "hl": "ko", "gl": "KR"]
         if let visitor = web.visitor {
             client["visitorData"] = visitor
