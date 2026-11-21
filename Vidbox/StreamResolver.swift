@@ -685,6 +685,14 @@ actor StreamResolver {
         CaptionStore.shared.save(id, json["captions"])
         var streaming: [String: Any] = streamingData
         if let tvPlayer { streaming = await decipher(streaming, player: tvPlayer, pot: pot) }
+        // 라이브 방송: 모바일 웹은 파일 대신 HLS 주소를 준다 → 주소 속 n을 풀고 /pot/<토큰>을 붙여 쓴다 (1.19.38)
+        if let tvPlayer, label == "mweb", let h = streaming["hlsManifestUrl"] as? String, var u = URL(string: h) {
+            if let n = pathValue(u, "n"), let solved = (await NSigSolver.shared.solveN([n], playerPath: tvPlayer))[n],
+               let r = URL(string: h.replacingOccurrences(of: "/n/\(n)/", with: "/n/\(solved)/")) { u = r }
+            if let pot, let r = URL(string: u.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/pot/" + pot) { u = r }
+            streaming["hlsManifestUrl"] = u.absoluteString
+            PlaybackDiag.note("mweb hls " + id + " n=" + (pathValue(URL(string: h)!, "n") == nil ? "none" : "Y"))
+        }
         let formats = (streaming["adaptiveFormats"] as? [[String: Any]] ?? []).compactMap(DashFormat.init)
         if tv {
             let raw: Int = (streamingData["adaptiveFormats"] as? [[String: Any]])?.count ?? 0
@@ -697,7 +705,7 @@ actor StreamResolver {
             let line: String = label + " " + id + " raw=" + String(raw) + " formats=" + String(formats.count) + " pot=" + potMark + " url=" + String(withURL) + " cipher=" + String(withCipher) + " js=" + playerTag + " keys=" + keyList
             PlaybackDiag.note(line)
         }
-        if tv, formats.isEmpty { throw AppError.noPlayableStream }
+        if tv, formats.isEmpty, streaming["hlsManifestUrl"] == nil { throw AppError.noPlayableStream }
         // 오디오: YouTube 자동 더빙(영어 등)은 빼고, 원본(기본) 트랙을 고른다
         let allAudio = formats.filter { $0.isAudio }
         let notDubbed = allAudio.filter { !$0.isAutoDubbed }
