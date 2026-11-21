@@ -289,7 +289,7 @@ actor StreamResolver {
                 formats = formats.map { f in
                     guard var c = URLComponents(url: f, resolvingAgainstBaseURL: false),
                           let n = c.queryItems?.first(where: { $0.name == "n" })?.value, let solved = map[n] else { return f }
-                    c.queryItems = c.queryItems?.map { $0.name == "n" ? URLQueryItem(name: "n", value: solved) : $0 }
+                    c.percentEncodedQueryItems = c.percentEncodedQueryItems?.map { $0.name == "n" ? URLQueryItem(name: "n", value: solved) : $0 }
                     return c.url ?? f
                 }
             }
@@ -333,7 +333,7 @@ actor StreamResolver {
         if video.isEmpty {
             video += formats.map { url in
                 guard let pot, var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return .single(url) }
-                c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "pot", value: pot)]
+                c.percentEncodedQueryItems = (c.percentEncodedQueryItems ?? []) + [URLQueryItem(name: "pot", value: pot.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? pot)]
                 return .single(c.url ?? url)
             }
         }
@@ -609,17 +609,22 @@ actor StreamResolver {
         for key in ["adaptiveFormats", "formats"] {
             out[key] = (streaming[key] as? [[String: Any]] ?? []).compactMap { f -> [String: Any]? in
                 guard var p = parts(f) else { return nil }
-                var items = p.url.queryItems ?? []
-                if let n = items.first(where: { $0.name == "n" })?.value {
+                // 원래 인코딩 그대로 두고 바꿀 값만 넣는다 (1.19.39)
+                // queryItems로 다시 쓰면 %2B가 +로 풀려 서명이 깨지고, 방송 클립(sefc 등) 파일이 403이었다
+                func enc(_ v: String) -> String {
+                    v.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? v
+                }
+                var items = p.url.percentEncodedQueryItems ?? []
+                if let n = p.url.queryItems?.first(where: { $0.name == "n" })?.value {
                     guard let v = solved.n[n] else { return nil }
-                    items = items.map { $0.name == "n" ? URLQueryItem(name: "n", value: v) : $0 }
+                    items = items.map { $0.name == "n" ? URLQueryItem(name: "n", value: enc(v)) : $0 }
                 }
                 if let s = p.s {
                     guard let v = solved.sig[s] else { return nil }
-                    items.append(URLQueryItem(name: p.sp, value: v))
+                    items.append(URLQueryItem(name: p.sp, value: enc(v)))
                 }
-                if let pot { items.append(URLQueryItem(name: "pot", value: pot)) }
-                p.url.queryItems = items
+                if let pot { items.append(URLQueryItem(name: "pot", value: enc(pot))) }
+                p.url.percentEncodedQueryItems = items
                 guard let url = p.url.url?.absoluteString else { return nil }
                 var g = f
                 g["url"] = url
