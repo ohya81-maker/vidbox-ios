@@ -473,8 +473,11 @@ actor StreamResolver {
         }
         let binding = web.datasync ?? web.visitor ?? ""
         // 영상 서버용(pot=)은 계정 세션에, 재생 정보 요청용은 영상 ID에 묶는다 (일부 영상은 영상별 토큰이 없으면 파일이 403)
-        let pot = binding.isEmpty ? nil : await PoTokenProvider.shared.token(binding: binding)
+        // 보안 토큰은 영상 ID에 묶는다: 계정 세션에 묶은 토큰은 무효로 보고 파일을 1분까지만 주거나(360p로 떨어짐)
+        // 방송 클립은 바로 403 (1.19.40, 안드로이드 기록으로 확인한 같은 증상)
         let playerToken = await PoTokenProvider.shared.token(binding: id)
+        let sessionPot = binding.isEmpty ? nil : await PoTokenProvider.shared.token(binding: binding)
+        let pot = playerToken ?? sessionPot
         // music: YouTube Music 웹(WEB_REMIX) — 같은 계정 · 같은 토큰, 다른 사이트
         let origin = music ? "https://music.youtube.com" : "https://www.youtube.com"
         let ua = music ? safariUserAgent : mwebUserAgent
