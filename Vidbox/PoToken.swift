@@ -67,6 +67,15 @@ final class PoTokenProvider: NSObject, WKNavigationDelegate {
         }
     }
 
+    /// 이 기기의 Safari와 같은 User-Agent. 아이패드 Safari는 원래 맥 Safari로 자신을 알린다
+    static var deviceUserAgent: String {
+        if UIDevice.current.userInterfaceIdiom == .pad { return StreamResolver.safariUserAgent }
+        let v = UIDevice.current.systemVersion.split(separator: ".").map(String.init)
+        let os = v.prefix(3).joined(separator: "_")
+        let short = v.prefix(2).joined(separator: ".")
+        return "Mozilla/5.0 (iPhone; CPU iPhone OS \(os) like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/\(short) Mobile/15E148 Safari/604.1"
+    }
+
     /// youtube.com 출처의 빈 페이지를 띄워 둔다 (네트워크로 페이지를 받지 않음)
     private func prepare() async {
         if ready { return }
@@ -77,7 +86,10 @@ final class PoTokenProvider: NSObject, WKNavigationDelegate {
             view.alpha = 0.01
             view.isUserInteractionEnabled = false
             view.navigationDelegate = self
-            view.customUserAgent = StreamResolver.safariUserAgent
+            // 보안 스크립트는 실제 환경(화면·터치·플랫폼)과 User-Agent가 맞는지 본다 (1.19.37)
+            // 아이폰이 맥 Safari라고 하면 어긋나 일부 영상(MAMA 등) 파일이 403 → 안드로이드처럼 기기 그대로
+            view.customUserAgent = Self.deviceUserAgent
+            PlaybackDiag.note("pot ua=" + (UIDevice.current.userInterfaceIdiom == .pad ? "mac" : "iphone"))
             // 창에 붙어 있어야 스크립트 타이머가 느려지지 않는다
             let window = UIApplication.shared.connectedScenes
                 .compactMap { ($0 as? UIWindowScene)?.windows.first { $0.isKeyWindow } ?? ($0 as? UIWindowScene)?.windows.first }
