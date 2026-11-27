@@ -92,7 +92,8 @@ actor StreamResolver {
 
     /// 백그라운드로 미리 준비. 동시에 너무 많이 요청하지 않도록 4개로 제한.
     /// 미리 받기는 YouTube에 요청을 많이 보낸다 → 너무 잦으면 「봇이 아님을 확인」 차단을 부른다.
-    /// 20초에 8개까지만, 차단 응답을 받으면 10분간 미리 받기를 멈춘다 (직접 누른 영상은 그대로 재생 시도)
+    /// 20초에 8개까지만, 차단 응답을 받으면 잠시 미리 받기를 멈춘다 (직접 누른 영상은 그대로 재생 시도).
+    /// 연속 3번 이상(하드 차단)이면 미리 받기를 전면 중단하고 익명 요청도 멈춘다 (2026-11-25)
     private var prefetchTimes: [Date] = []
     static let blockedUntil = BlockClock()
 
@@ -100,7 +101,8 @@ actor StreamResolver {
         // 「봇 확인」으로 막힌 동안은 미리 받기를 아예 하지 않는다 (요청이 쌓이면 차단이 더 오래 간다)
         // 단, 로그인돼 있으면 로그인 재생으로 다음 1개만 미리 받는다 (쇼츠가 멈칫하지 않게)
         let blocked = Self.blockedUntil.isBlocked
-        if blocked && !AuthStore.shared.isLoggedIn { return }
+        // 하드 차단(연속 3번 이상)이면 미리 받기를 전면 중단 (폭주 차단). 가벼운 차단이면 로그인 상태에서 앞 3개만
+        if blocked && (Self.blockedUntil.isHard || !AuthStore.shared.isLoggedIn) { return }
         let targets = blocked ? Array(ids.prefix(3)) : ids
         for id in targets where !id.hasPrefix("jf:") {
             if let cached = cache[id], Date().timeIntervalSince(cached.date) < ttl { continue }
@@ -169,6 +171,8 @@ actor StreamResolver {
             if Self.blockedUntil.isBlocked {
                 // 막힌 동안 로그인돼 있으면 로그인 재생으로 바로 (로그인 안 한 요청을 더 보내지 않기)
                 if AuthStore.shared.isLoggedIn, let signed = await Self.signedIn(id: id) { return signed }
+                // 하드 차단 동안엔 익명 요청조차 보내지 않는다 — 더 두드리면 차단이 길어진다 (2026-11-25)
+                if Self.blockedUntil.isHard { throw AppError.noPlayableStream }
                 if let fast = try? await Self.fetchFromInnerTube(id: id) { return fast }
                 throw AppError.noPlayableStream
             }
@@ -684,12 +688,12 @@ actor StreamResolver {
             let prefix: String = tv ? label + " " : ""
             let msg: String = "player http=\((response as? HTTPURLResponse)?.statusCode ?? 0) status=\(playability?["status"] as? String ?? "-") reason=\(playability?["reason"] as? String ?? "-")"
             PlaybackDiag.note(prefix + msg)
-            if !tv, playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.block(minutes: 2) }
+            if !tv, playability?["status"] as? String == "LOGIN_REQUIRED" { StreamResolver.blockedUntil.flag() }
             if label == "tv" { tvConfig.current = nil }
             throw AppError.noPlayableStream
         }
 
-        if !tv { StreamResolver.blockedUntil.clear() }
+        if !tv { StreamResolver.blockedUntil.ok() }
         CaptionStore.shared.save(id, json["captions"])
         var streaming: [String: Any] = streamingData
         if let tvPlayer { streaming = await decipher(streaming, player: tvPlayer, pot: pot) }
@@ -1579,9 +1583,22 @@ final class OnceFlag: @unchecked Sendable {
 final class BlockClock: @unchecked Sendable {
     private let lock = NSLock()
     private var until = Date.distantPast
+    private var streak = 0
     var isBlocked: Bool { lock.lock(); defer { lock.unlock() }; return Date() < until }
+    /// 하드 차단: 연속 LOGIN_REQUIRED가 3번 이상 — 진짜 IP 차단으로 보고 모든 요청을 멈춘다 (2026-11-25 교훈)
+    var isHard: Bool { lock.lock(); defer { lock.unlock() }; return Date() < until && streak >= 3 }
     func block(minutes: Double) { lock.lock(); until = Date().addingTimeInterval(minutes * 60); lock.unlock() }
     func clear() { lock.lock(); until = .distantPast; lock.unlock() }
+    /// 봇 확인(LOGIN_REQUIRED) 한 번: 한두 번은 일시적일 수 있어 짧게(2·5분), 연속 3번부터는 길게(15분) 쉰다
+    func flag() {
+        lock.lock()
+        streak += 1
+        let minutes: Double = streak >= 3 ? 15 : (streak >= 2 ? 5 : 2)
+        until = Date().addingTimeInterval(minutes * 60)
+        lock.unlock()
+    }
+    /// OK 응답: 연속 횟수와 막힘을 모두 푼다
+    func ok() { lock.lock(); streak = 0; until = .distantPast; lock.unlock() }
 }
 
 
