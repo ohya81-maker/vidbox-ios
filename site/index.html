@@ -88,6 +88,12 @@
   .tile small { display: block; color: var(--sub); font-size: 12px; line-height: 1.4; margin-top: 2px; }
 
   .notes { white-space: pre-line; color: var(--sub); font-size: 15px; margin: 0; }
+  .older-notes { margin-top: 10px; }
+  .older-notes summary { cursor: pointer; color: var(--accent); font-size: 14px; list-style: none; }
+  .older-notes summary::-webkit-details-marker { display: none; }
+  .older-notes summary::after { content: " ▾"; }
+  .older-notes[open] summary::after { content: " ▴"; }
+  .older-notes .notes { margin-top: 8px; }
   .version-line { color: var(--sub); font-size: 14px; margin: 0 0 6px; }
 
   /* 설치 카드 */
@@ -161,7 +167,7 @@
   <section class="block">
     <div class="row-head"><h2>새로운 기능</h2><span>{{DATE}}</span></div>
     <p class="version-line">버전 {{VERSION}} ({{BUILD}})</p>
-    <p class="notes">{{NOTES}}</p>
+    {{NOTES}}
   </section>
 
   <section class="block" id="install">

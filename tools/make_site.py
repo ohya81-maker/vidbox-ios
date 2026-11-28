@@ -193,6 +193,20 @@ page = open(os.path.join(ROOT, "site", "index.html"), encoding="utf-8").read()
 page = page.replace("{{DIRECT_INSTALL}}", direct).replace("{{APK_INSTALL}}", apk_block)
 page = page.replace("<p>APK 파일로 설치</p>", f"<p>버전 {apk_version} · APK 파일로 설치</p>" if args.apk and apk_version else "<p>APK 파일로 설치</p>")
 source_url = f"{base}/apps.json"
+
+# 새로운 기능: 최근 3개만 보이고 나머지는 접어 둔다
+def notes_html(text):
+    esc = lambda t: t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    lines = [l for l in text.splitlines() if l.strip()]
+    shown = "\n".join(esc(l) for l in lines[:3])
+    html = f'<p class="notes">{shown}</p>'
+    rest = lines[3:]
+    if rest:
+        older = "\n".join(esc(l) for l in rest)
+        html += (f'<details class="older-notes"><summary>이전 기록 {len(rest)}개</summary>'
+                 f'<p class="notes">{older}</p></details>')
+    return html
+
 for key, value in {
     "{{VERSION}}": version,
     "{{BUILD}}": build,
@@ -202,7 +216,7 @@ for key, value in {
     "{{SOURCE_URL_ENC}}": urllib.parse.quote(source_url, safe=""),
     "{{IPA_NAME}}": ipa_name,
     "{{BASE_URL}}": base,
-    "{{NOTES}}": notes.replace("<", "&lt;"),
+    "{{NOTES}}": notes_html(notes),
     "{{MIN_OS}}": min_os,
 }.items():
     page = page.replace(key, value)
