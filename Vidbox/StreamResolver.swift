@@ -723,9 +723,15 @@ actor StreamResolver {
         let allAudio = formats.filter { $0.isAudio }
         let originals = allAudio.filter { $0.isOriginalAudio && !$0.isAutoDubbed }
         let defaults = allAudio.filter { $0.isDefaultAudio && !$0.isAutoDubbed }
-        let pool0 = !originals.isEmpty ? originals : (!defaults.isEmpty ? defaults : allAudio)
+        let nonDubbed = allAudio.filter { !$0.isAutoDubbed }
+        let pool0 = !originals.isEmpty ? originals : (!defaults.isEmpty ? defaults : (!nonDubbed.isEmpty ? nonDubbed : allAudio))
         let pool = pool0.contains { !$0.isDrc } ? pool0.filter { !$0.isDrc } : pool0
         let audioFormat = pool.first { $0.itag == 140 } ?? pool.max { $0.bitrate < $1.bitrate }
+        // 여러 언어 트랙이 있는 영상: 어떤 트랙들이 왔고 무엇을 골랐는지 NAS 진단 로그로 (영상마다 한 번)
+        if Set(allAudio.map(\.trackKey)).count > 1 {
+            PlaybackDiag.reportOnce("audio-tracks", id: id,
+                                    details: ["pick=" + (audioFormat?.trackDiag ?? "-")] + allAudio.prefix(12).map(\.trackDiag))
+        }
         // 화질 후보: 720p 먼저(빠른 시작), 그다음 1080p / 480p 로 자동 전환
         // 쇼츠 같은 세로 영상은 720p가 720x1280이므로 "짧은 변" 기준으로 고른다
         let videoFormats: [DashFormat] = [720, 1080, 480, 360].compactMap { p in
@@ -965,8 +971,11 @@ struct DashFormat: Sendable {
     /// 여러 언어 오디오가 있을 때: 원본(기본) 트랙인지 / YouTube 자동 더빙인지
     let isDefaultAudio: Bool
     let isAutoDubbed: Bool
-    /// 원본 트랙 여부 — audioTrack.displayName 에 "original"(원본)이 들어있다. 다국어/자동더빙 영상에서 원본을 고르는 기준
+    /// 원본 트랙 여부 — xtags 의 acont=original, 또는 displayName 에 "original"/"원본"/"원어". 다국어/자동더빙 영상에서 원본을 고르는 기준
     let isOriginalAudio: Bool
+    /// 같은 언어 트랙끼리 묶는 키(트랙 id + xtags)와 진단용 한 줄 요약
+    let trackKey: String
+    let trackDiag: String
     /// 음량 압축(DRC) 버전 — 같은 원본이 보통판과 DRC판 두 개로 올 때 보통판을 쓴다
     let isDrc: Bool
 
@@ -997,13 +1006,40 @@ struct DashFormat: Sendable {
         self.contentLength = Int("\(d["contentLength"] ?? "")")
         let track = d["audioTrack"] as? [String: Any]
         self.isDefaultAudio = track == nil || (track?["audioIsDefault"] as? Bool ?? false)
-        self.isAutoDubbed = track?["isAutoDubbed"] as? Bool ?? false
-        let trackName = ((track?["displayName"] as? String) ?? "").lowercased()
-        // 단일 트랙(audioTrack 없음)은 원본으로 본다. 여러 트랙이면 displayName 에 "original"/"원본"이 든 것이 원본
-        self.isOriginalAudio = track == nil ||
-            ((trackName.contains("original") || trackName.contains("원본"))
-             && !trackName.contains("descriptive") && !trackName.contains("설명"))
+        let rawName = (track?["displayName"] as? String) ?? ""
+        let trackName = rawName.lowercased()
+        // xtags(acont=original / dubbed / dubbed-auto / descriptive): 화면 언어와 무관한 가장 확실한 신호 (1.19.43)
+        let xt = Self.xtags(d, url: url)
+        let acontDubbed = xt.contains("dubbed")
+        let descriptive = xt.contains("descriptive") || trackName.contains("descriptive") || trackName.contains("설명")
+        let nameOriginal = trackName.contains("original") || trackName.contains("원본") || trackName.contains("원어")
+        self.isAutoDubbed = (track?["isAutoDubbed"] as? Bool ?? false) || acontDubbed
+        // 단일 트랙(audioTrack·xtags 없음)은 원본. 여러 트랙이면 acont=original 이나 원본 표시가 있는 것
+        self.isOriginalAudio = !acontDubbed && !descriptive
+            && (xt.contains("original") || nameOriginal || (track == nil && xt.isEmpty))
+        let trackID = (track?["id"] as? String) ?? "-"
+        self.trackKey = trackID + "|" + xt
+        let defMark = (track?["audioIsDefault"] as? Bool ?? false) ? "Y" : "N"
+        self.trackDiag = "\(itag)|\(trackID)|\(rawName)|def=\(defMark)|xt=\(xt.prefix(60))"
         self.isDrc = d["isDrc"] as? Bool ?? false
+    }
+
+    /// xtags: 파일 주소의 xtags 쿼리(acont=original:lang=ko)와 포맷의 xtags 필드(base64 protobuf)를 소문자로 합친 문자열
+    private static func xtags(_ d: [String: Any], url: URL) -> String {
+        var out = ""
+        if let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "xtags" })?.value {
+            out += q.lowercased()
+        }
+        if let b64 = d["xtags"] as? String {
+            var s = b64.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            while s.count % 4 != 0 { s += "=" }
+            if let data = Data(base64Encoded: s) {
+                let text = String(decoding: data.map { ($0 >= 0x20 && $0 < 0x7f) ? $0 : 0x20 }, as: UTF8.self)
+                out += (out.isEmpty ? "" : " ") + text.lowercased()
+            }
+        }
+        return out
     }
 
     private static func range(_ any: Any?) -> ClosedRange<Int>? {
@@ -1516,8 +1552,17 @@ enum PlaybackDiag {
         lock.lock(); notes.append(s); if notes.count > 30 { notes.removeFirst(notes.count - 30) }; lock.unlock()
     }
 
-    static func report(_ kind: String, id: String, details: [String]) {
-        lock.lock(); let recent = notes; notes.removeAll(); lock.unlock()
+    nonisolated(unsafe) private static var reported: Set<String> = []
+
+    /// 같은 종류·영상은 앱 실행 중 한 번만 보낸다 (최근 메모는 건드리지 않음)
+    static func reportOnce(_ kind: String, id: String, details: [String]) {
+        lock.lock(); let fresh = reported.insert(kind + ":" + id).inserted; lock.unlock()
+        if fresh { report(kind, id: id, details: details, includeNotes: false) }
+    }
+
+    static func report(_ kind: String, id: String, details: [String], includeNotes: Bool = true) {
+        var recent: [String] = []
+        if includeNotes { lock.lock(); recent = notes; notes.removeAll(); lock.unlock() }
         let body: [String: Any] = [
             "kind": kind, "id": id,
             "app": (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
