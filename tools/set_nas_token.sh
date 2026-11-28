@@ -2,7 +2,7 @@
 # 시놀로지 등록 페이지가 GitHub 작업을 시작할 때 쓸 토큰을 NAS에 저장한다.
 # 토큰은 화면에 보이지 않게 입력받아 \\NAS\docker\youtube\.private\config.php 에만 쓴다 (웹에서는 실행만 되고 내용은 안 보임).
 set -euo pipefail
-NAS_DIR="${KTUBE_NAS_DIR:-//172.30.1.27/docker/youtube}"
+NAS_DIR="${KTUBE_NAS_DIR:-//mistylake/docker/youtube}"
 mkdir -p "$NAS_DIR/.private"
 printf 'GitHub 토큰(github_pat_...)을 붙여넣고 Enter: '
 read -rs TOKEN

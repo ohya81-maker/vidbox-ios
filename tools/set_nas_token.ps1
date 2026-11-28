@@ -1,6 +1,6 @@
 # 시놀로지 등록 페이지가 GitHub 작업을 시작할 때 쓸 토큰을 NAS에 저장한다 (PowerShell용).
-# 입력한 토큰은 화면에 보이지 않고 \\172.30.1.27\docker\youtube\.private\config.php 에만 저장된다.
-$dir = '\\172.30.1.27\docker\youtube\.private'
+# 입력한 토큰은 화면에 보이지 않고 \\mistylake\docker\youtube\.private\config.php 에만 저장된다.
+$dir = '\\mistylake\docker\youtube\.private'
 New-Item -ItemType Directory -Force $dir | Out-Null
 $secure = Read-Host 'GitHub 토큰(github_pat_...)을 붙여넣고 Enter' -AsSecureString
 $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
