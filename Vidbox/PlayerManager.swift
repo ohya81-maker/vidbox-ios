@@ -726,6 +726,19 @@ final class PlayerManager: ObservableObject {
                 sourceKind = source.kind
                 startPlayback(playerItem, seekTo: position, autoPlay: autoPlay)
                 armWatchdog(item: item, position: position, autoPlay: autoPlay)
+                // 여러 언어 오디오 영상: 실제로 어떤 방식·어떤 오디오로 재생했는지 NAS 진단 로그로 (영상마다 한 번)
+                if PlaybackDiag.isMultiAudio(item.id) {
+                    let videoID = item.id, kind = source.kind, index = candidateIndex
+                    Task { @MainActor in
+                        var chosen = "-"
+                        if let group = try? await playerItem.asset.loadMediaSelectionGroup(for: .audible) {
+                            chosen = (playerItem.currentMediaSelection.selectedMediaOption(in: group)?.displayName ?? "none")
+                                + " of [" + group.options.map(\.displayName).joined(separator: "/") + "]"
+                        }
+                        PlaybackDiag.reportOnce("audio-play", id: videoID,
+                                                details: ["source=\(kind)#\(index)", "audible=\(chosen)"], includeNotes: true)
+                    }
+                }
                 return
             }
             candidateIndex += 1

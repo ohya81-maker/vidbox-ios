@@ -728,7 +728,9 @@ actor StreamResolver {
         let pool = pool0.contains { !$0.isDrc } ? pool0.filter { !$0.isDrc } : pool0
         let audioFormat = pool.first { $0.itag == 140 } ?? pool.max { $0.bitrate < $1.bitrate }
         // 여러 언어 트랙이 있는 영상: 어떤 트랙들이 왔고 무엇을 골랐는지 NAS 진단 로그로 (영상마다 한 번)
-        if Set(allAudio.map(\.trackKey)).count > 1 {
+        let multiAudio = Set(allAudio.map(\.trackKey)).count > 1
+        if multiAudio {
+            PlaybackDiag.markMultiAudio(id)
             PlaybackDiag.reportOnce("audio-tracks", id: id,
                                     details: ["pick=" + (audioFormat?.trackDiag ?? "-")] + allAudio.prefix(12).map(\.trackDiag))
         }
@@ -738,6 +740,15 @@ actor StreamResolver {
             formats.first { $0.isVideo && $0.codecs.hasPrefix("avc1") && min($0.width, $0.height) == p }
         }
         let youtubeHLS = (streaming["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
+        // YouTube HLS에는 모든 언어 오디오가 들어 있고 기본값이 계정 언어(영어 더빙 등)일 수 있다 →
+        // 재생할 때 원본 언어를 고르도록 이 주소에 원본 언어를 기억해 둔다 (1.19.44)
+        if multiAudio, let youtubeHLS, let original = audioFormat, original.isOriginalAudio, !original.trackLang.isEmpty {
+            OriginalAudioHint.set(original.trackLang, for: youtubeHLS)
+        }
+        if videoFormats.isEmpty {
+            let vids = formats.filter(\.isVideo).prefix(8).map { "\($0.itag):\($0.codecs.prefix(4)):\($0.width)x\($0.height)" }
+            PlaybackDiag.note("no avc1 video \(id): " + vids.joined(separator: ","))
+        }
         let muxed = (streaming["formats"] as? [[String: Any]])?
             .first(where: { $0["url"] is String })
             .flatMap { ($0["url"] as? String).flatMap(URL.init(string:)) }
@@ -805,12 +816,31 @@ actor StreamResolver {
     private static func audioPath(id: String, audio: DashFormat?) async -> String? {
         guard let audio else { return nil }
         if let p = try? await LocalHLS.shared.buildAudio(id: id, audio: audio) { return p }
-        return try? await LocalHLS.shared.buildAudio(id: id, audio: audio)
+        do { return try await LocalHLS.shared.buildAudio(id: id, audio: audio) } catch {
+            PlaybackDiag.note("localhls audio fail \(id) itag=\(audio.itag): \(error)")
+            return nil
+        }
     }
 
     private static func videoPath(id: String, videos: [DashFormat], audio: DashFormat?) async -> String? {
         guard let audio, !videos.isEmpty else { return nil }
-        return try? await LocalHLS.shared.buildVideo(id: id, videos: videos, audio: audio)
+        do { return try await LocalHLS.shared.buildVideo(id: id, videos: videos, audio: audio) } catch {
+            PlaybackDiag.note("localhls video fail \(id) itags=\(videos.map(\.itag)): \(error)")
+            return nil
+        }
+    }
+
+    /// 여러 언어 오디오가 든 HLS: 이름에 "원본/original"이 있는 렌디션, 없으면 원본 언어 코드가 맞는 렌디션을 고른다
+    nonisolated static func selectOriginalAudio(_ item: AVPlayerItem, lang: String?) async {
+        guard let group = try? await item.asset.loadMediaSelectionGroup(for: .audible), group.options.count > 1 else { return }
+        let named = group.options.first { option in
+            let n = option.displayName.lowercased()
+            return (n.contains("원본") || n.contains("original")) && !n.contains("descriptive")
+        }
+        let byLang = lang.flatMap { l in
+            group.options.first { ($0.extendedLanguageTag ?? $0.locale?.identifier ?? "").lowercased().hasPrefix(l) }
+        }
+        if let pick = named ?? byLang { item.select(pick, in: group) }
     }
 
     /// 진단용: 파일 앞 1KB 요청 결과 (상태 · 형식 · 걸린 시간)
@@ -924,6 +954,10 @@ actor StreamResolver {
             if url.path.contains("/pot/") {
                 item.preferredMaximumResolution = CGSize(width: 1280, height: 1280)
             }
+            // YouTube HLS: 여러 언어 오디오 중 원본을 고른다 (자동 선택을 꺼 두어 기본값=영어 더빙이 나오던 문제)
+            if url.absoluteString.contains("m3u8") || url.host?.hasPrefix("manifest.") == true {
+                await selectOriginalAudio(item, lang: OriginalAudioHint.lang(for: url))
+            }
             return item
 
         case .local(let path):
@@ -976,6 +1010,8 @@ struct DashFormat: Sendable {
     /// 같은 언어 트랙끼리 묶는 키(트랙 id + xtags)와 진단용 한 줄 요약
     let trackKey: String
     let trackDiag: String
+    /// 오디오 트랙 언어 코드 (audioTrack.id "ko.4" → "ko"). 없으면 ""
+    let trackLang: String
     /// 음량 압축(DRC) 버전 — 같은 원본이 보통판과 DRC판 두 개로 올 때 보통판을 쓴다
     let isDrc: Bool
 
@@ -1019,6 +1055,7 @@ struct DashFormat: Sendable {
             && (xt.contains("original") || nameOriginal || (track == nil && xt.isEmpty))
         let trackID = (track?["id"] as? String) ?? "-"
         self.trackKey = trackID + "|" + xt
+        self.trackLang = track == nil ? "" : String(trackID.split(separator: ".").first ?? "").lowercased()
         let defMark = (track?["audioIsDefault"] as? Bool ?? false) ? "Y" : "N"
         self.trackDiag = "\(itag)|\(trackID)|\(rawName)|def=\(defMark)|xt=\(xt.prefix(60))"
         self.isDrc = d["isDrc"] as? Bool ?? false
@@ -1544,9 +1581,33 @@ final class HedgedStream: NSObject, URLSessionDataDelegate, @unchecked Sendable 
 
 // MARK: - 재생 실패 진단 (실패했을 때만 집 NAS로 짧은 기록을 보낸다: 원인 파악용)
 
+/// YouTube HLS 주소 → 원본 오디오 언어 ("ko" 등). 재생 항목을 만들 때 원본 렌디션을 고르는 데 쓴다
+enum OriginalAudioHint {
+    nonisolated(unsafe) private static var langs: [String: String] = [:]
+    private static let lock = NSLock()
+
+    static func set(_ lang: String, for url: URL) {
+        lock.lock(); if langs.count > 300 { langs.removeAll() }; langs[url.absoluteString] = lang; lock.unlock()
+    }
+
+    static func lang(for url: URL) -> String? {
+        lock.lock(); defer { lock.unlock() }; return langs[url.absoluteString]
+    }
+}
+
 enum PlaybackDiag {
     nonisolated(unsafe) private static var notes: [String] = []
     private static let lock = NSLock()
+    nonisolated(unsafe) private static var multiAudio: Set<String> = []
+
+    /// 여러 언어 오디오가 있는 영상인지 (재생 시작 때 어떤 오디오가 나왔는지 보고하는 데 쓴다)
+    static func markMultiAudio(_ id: String) {
+        lock.lock(); if multiAudio.count > 500 { multiAudio.removeAll() }; multiAudio.insert(id); lock.unlock()
+    }
+
+    static func isMultiAudio(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }; return multiAudio.contains(id)
+    }
 
     static func note(_ s: String) {
         lock.lock(); notes.append(s); if notes.count > 30 { notes.removeFirst(notes.count - 30) }; lock.unlock()
@@ -1555,9 +1616,9 @@ enum PlaybackDiag {
     nonisolated(unsafe) private static var reported: Set<String> = []
 
     /// 같은 종류·영상은 앱 실행 중 한 번만 보낸다 (최근 메모는 건드리지 않음)
-    static func reportOnce(_ kind: String, id: String, details: [String]) {
+    static func reportOnce(_ kind: String, id: String, details: [String], includeNotes: Bool = false) {
         lock.lock(); let fresh = reported.insert(kind + ":" + id).inserted; lock.unlock()
-        if fresh { report(kind, id: id, details: details, includeNotes: false) }
+        if fresh { report(kind, id: id, details: details, includeNotes: includeNotes) }
     }
 
     static func report(_ kind: String, id: String, details: [String], includeNotes: Bool = true) {
