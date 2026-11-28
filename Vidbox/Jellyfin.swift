@@ -133,7 +133,13 @@ final class JellyfinSession: @unchecked Sendable {
 
     private init() {
         let d = UserDefaults.standard
-        _server = d.string(forKey: "jf.server") ?? "http://mistylake.duckdns.org"
+        var saved = d.string(forKey: "jf.server")
+        // 미디어 서버가 https로 바뀜: 예전에 저장된 http 주소를 옮겨 준다
+        if let s = saved, s.hasPrefix("http://mistylake.duckdns.org") {
+            saved = "https://" + String(s.dropFirst("http://".count))
+            d.set(saved, forKey: "jf.server")
+        }
+        _server = saved ?? "https://mistylake.duckdns.org"
         _userID = d.string(forKey: "jf.userID")
         _userName = d.string(forKey: "jf.userName")
         _token = Keychain.read("jf.token").flatMap { String(data: $0, encoding: .utf8) }
