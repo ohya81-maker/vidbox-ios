@@ -242,6 +242,15 @@ final class JellyfinSession: @unchecked Sendable {
             return [URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
                         + "&MaxStreamingBitrate=10000000&TranscodingMaxAudioChannels=2&AllowVideoStreamCopy=false")].compactMap { $0 }
         }
+        // 글자 자막을 켰는데 원본 파일을 바로 틀 수 없으면 영상까지 변환한 것을 먼저 쓴다.
+        // 영상 복사(HLS)는 키프레임 단위로만 잘려서, 중간으로 이동하면 재생 시간과 실제 장면·음성이 몇 초씩 어긋나
+        // 앱이 그리는 자막이 음성과 맞지 않았다 (예: 윈터솔저 MKV·DTS). 변환은 조각 경계에 키프레임을 넣어 정확하다.
+        // 복사 방식은 변환이 실패할 때를 위한 예비로 뒤에 남긴다
+        if urls.isEmpty, choice?.subtitleIndex != nil, choice?.subtitleIsText == true {
+            urls.append(URL(string: base + "&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
+                            + "&MaxStreamingBitrate=20000000&VideoBitrate=19808000"
+                            + "&TranscodingMaxAudioChannels=2&AllowVideoStreamCopy=false"))
+        }
         // 음성이 아이폰이 못 트는 코덱(DTS·TrueHD 등)이라 변환해야 하면: 영상은 그대로, 음성만 AAC로 바꿔 TS 조각으로.
         // fMP4 조각에 '영상 복사 + 음성 변환'을 섞으면 재생 중 갑자기 소리가 끊기는 일이 있었다 (예: DTS 영화)
         let audioCodec = choice?.audioCodec ?? ""
